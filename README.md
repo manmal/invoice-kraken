@@ -35,7 +35,9 @@ Search Gmail for invoice-related emails for a given year:
 npm run search -- --account your@gmail.com --year 2024
 ```
 
-This searches for emails containing "invoice", "rechnung", or "billing" and stores them in a SQLite database.
+This searches for emails containing invoice-related terms and stores them in a SQLite database.
+
+**Search terms:** invoice, rechnung, beleg, billing, zahlung, quittung, receipt, buchungsbeleg, bestellbestätigung (with attachments), zahlungsbestätigung
 
 ### 2. Investigate findings
 
