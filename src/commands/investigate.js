@@ -12,6 +12,7 @@ import {
   findDuplicateByHash,
   findDuplicateByFuzzyMatch,
 } from '../lib/db.js';
+import { prefilterEmails } from '../lib/prefilter.js';
 import { getMessage, downloadAttachment } from '../lib/gog.js';
 import { analyzeEmailsForInvoices } from '../lib/pi.js';
 import { extractInvoiceData, parseAmountToCents } from '../lib/extract.js';
@@ -36,12 +37,29 @@ export async function investigateCommand(options) {
     return;
   }
   
-  console.log(`Found ${pendingEmails.length} pending emails to investigate.\n`);
+  // Pre-filter obvious non-invoices
+  const { toAnalyze, toSkip } = prefilterEmails(pendingEmails);
+  
+  console.log(`Found ${pendingEmails.length} pending emails.`);
+  console.log(`  → ${toSkip.length} auto-skipped (obvious non-invoices)`);
+  console.log(`  → ${toAnalyze.length} to analyze with AI\n`);
+  
+  // Mark skipped emails as no_invoice
+  for (const { email, reason } of toSkip) {
+    updateEmailStatus(email.id, account, 'no_invoice', {
+      notes: `Auto-skipped: ${reason}`,
+    });
+  }
+  
+  if (toAnalyze.length === 0) {
+    console.log('No emails require AI analysis.');
+    return;
+  }
   
   // Process in batches
   const batches = [];
-  for (let i = 0; i < pendingEmails.length; i += batchSize) {
-    batches.push(pendingEmails.slice(i, i + batchSize));
+  for (let i = 0; i < toAnalyze.length; i += batchSize) {
+    batches.push(toAnalyze.slice(i, i + batchSize));
   }
   
   let stats = {

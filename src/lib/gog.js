@@ -74,7 +74,9 @@ export async function getMessage(account, messageId) {
       `gog gmail get ${messageId} --account ${account} --output json`,
       { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 }
     );
-    return JSON.parse(output);
+    const result = JSON.parse(output);
+    // gog wraps the response in { message: {...} }
+    return result.message || result;
   } catch (error) {
     console.error(`Error getting message ${messageId}:`, error.message);
     return null;
@@ -90,7 +92,9 @@ export async function getThread(account, threadId) {
       `gog gmail thread ${threadId} --account ${account} --output json`,
       { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 }
     );
-    return JSON.parse(output);
+    const result = JSON.parse(output);
+    // gog wraps the response
+    return result.thread || result;
   } catch (error) {
     console.error(`Error getting thread ${threadId}:`, error.message);
     return null;
