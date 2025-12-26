@@ -8,11 +8,11 @@
     "invoice-kraken": "./src/index.js"
   },
   "scripts": {
-    "start": "node src/index.js",
-    "search": "node src/index.js search",
-    "investigate": "node src/index.js investigate",
-    "download": "node src/index.js download",
-    "list": "node src/index.js list"
+    "start": "bun src/index.js",
+    "search": "bun src/index.js search",
+    "investigate": "bun src/index.js investigate",
+    "download": "bun src/index.js download",
+    "list": "bun src/index.js list"
   },
   "keywords": [
     "invoice",
@@ -23,13 +23,12 @@
   "author": "Manuel Maly",
   "license": "MIT",
   "dependencies": {
-    "better-sqlite3": "^11.7.0",
     "commander": "^12.1.0"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.12"
+    "@types/bun": "^1.1.14"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "bun": ">=1.0.0"
   }
 }

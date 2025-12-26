@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
 /**
  * Invoice Kraken - Search Gmail for invoices using gogcli and pi's scout/browser skills

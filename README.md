@@ -14,14 +14,50 @@ Search Gmail for invoices using [gogcli](https://github.com/steipete/gogcli) and
 
 ## Prerequisites
 
-- Node.js >= 20
+- [Bun](https://bun.sh/) runtime (>= 1.0)
 - [gogcli](https://github.com/steipete/gogcli) installed and configured with your Gmail account
-- [pi](https://github.com/badlogic/pi-mono) CLI with scout and browser skills
+- [pi](https://github.com/badlogic/pi-mono) CLI for AI-powered invoice analysis
 
 ## Installation
 
+### 1. Install Bun
+
 ```bash
-npm install
+curl -fsSL https://bun.sh/install | bash
+```
+
+### 2. Install and configure gogcli
+
+```bash
+# Install via Homebrew
+brew install steipete/tap/gogcli
+
+# Set up OAuth credentials (one-time setup)
+# 1. Create a Google Cloud project: https://console.cloud.google.com/projectcreate
+# 2. Enable Gmail API: https://console.cloud.google.com/apis/api/gmail.googleapis.com
+# 3. Create OAuth credentials (Desktop app): https://console.cloud.google.com/auth/clients
+# 4. Download the client JSON file
+
+gog auth credentials ~/Downloads/client_secret_*.json
+gog auth add your@gmail.com
+```
+
+### 3. Install pi
+
+```bash
+# Install pi globally
+npm install -g @mariozechner/pi-coding-agent
+
+# Verify it works
+pi --help
+```
+
+For browser-based invoice downloads (the `download` command), you'll need the browser skill. See the [pi-mono browser skill documentation](https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent/examples/custom-tools/browser) for setup instructions.
+
+### 4. Install invoice-kraken
+
+```bash
+bun install
 ```
 
 ## Setup
