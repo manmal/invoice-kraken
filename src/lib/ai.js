@@ -22,6 +22,7 @@ import os from 'os';
 import fs from 'fs';
 import { getModelForTask, MODEL_CONFIG } from './models.js';
 import { loadConfig, getVehicleVatRecovery, getTelecomBusinessPercent, isKleinunternehmer } from './config.js';
+import { emptyUsage, addUsage } from './tokens.js';
 
 let authStorage = null;
 let modelRegistry = null;
@@ -97,6 +98,10 @@ export async function checkAuth() {
 /**
  * Create a simple prompt-response session for classification tasks
  * No tools, no persistence, just LLM completion
+ * 
+ * @param {string} prompt - The prompt to send
+ * @param {string} task - Task name for model selection
+ * @returns {Promise<{output: string, usage: Object, model: string, provider: string}>}
  */
 async function simplePrompt(prompt, task = 'emailClassification') {
   const { authStorage, modelRegistry } = initAuth();
@@ -124,16 +129,25 @@ async function simplePrompt(prompt, task = 'emailClassification') {
   });
   
   let output = '';
+  const usage = emptyUsage();
+  let model = taskConfig.model.id;
+  let provider = taskConfig.model.provider;
   
   session.subscribe((event) => {
     if (event.type === 'message_update' && event.assistantMessageEvent?.type === 'text_delta') {
       output += event.assistantMessageEvent.delta;
     }
+    // Collect token usage from turn_end events
+    if (event.type === 'turn_end' && event.message?.usage) {
+      addUsage(usage, event.message.usage);
+      model = event.message.model || model;
+      provider = event.message.provider || provider;
+    }
   });
   
   try {
     await session.prompt(prompt);
-    return output.trim();
+    return { output: output.trim(), usage, model, provider };
   } finally {
     session.dispose();
   }
@@ -260,6 +274,8 @@ Return ONLY a valid JSON array with this structure:
 
 /**
  * Analyze emails for invoice classification
+ * @param {Object[]} emails - Emails to analyze
+ * @returns {Promise<{results: Object[], usage: Object, model: string, provider: string}>}
  */
 export async function analyzeEmailsForInvoices(emails) {
   // Check authentication first
@@ -272,11 +288,11 @@ export async function analyzeEmailsForInvoices(emails) {
   const prompt = buildClassificationPrompt(emails);
   
   try {
-    const result = await simplePrompt(prompt, 'emailClassification');
+    const { output, usage, model, provider } = await simplePrompt(prompt, 'emailClassification');
     
     // Extract JSON from response (it might have markdown code blocks)
-    let jsonStr = result;
-    const jsonMatch = result.match(/```(?:json)?\s*([\s\S]*?)```/);
+    let jsonStr = output;
+    const jsonMatch = output.match(/```(?:json)?\s*([\s\S]*?)```/);
     if (jsonMatch) {
       jsonStr = jsonMatch[1];
     }
@@ -287,23 +303,30 @@ export async function analyzeEmailsForInvoices(emails) {
       jsonStr = arrayMatch[0];
     }
     
-    return JSON.parse(jsonStr);
+    const results = JSON.parse(jsonStr);
+    return { results, usage, model, provider };
   } catch (error) {
     console.error('Error analyzing emails:', error.message);
     // Return empty analysis on error
-    return emails.map(e => ({
-      id: e.id,
-      has_invoice: false,
-      invoice_type: 'none',
-      confidence: 'low',
-      notes: `Analysis failed: ${error.message}`,
-    }));
+    return {
+      results: emails.map(e => ({
+        id: e.id,
+        has_invoice: false,
+        invoice_type: 'none',
+        confidence: 'low',
+        notes: `Analysis failed: ${error.message}`,
+      })),
+      usage: emptyUsage(),
+      model: 'unknown',
+      provider: 'unknown',
+    };
   }
 }
 
 /**
  * Download invoice via browser automation
  * This still uses a full agent session with tools
+ * @returns {Promise<{result: Object, usage: Object, model: string, provider: string}>}
  */
 export async function downloadInvoiceWithBrowser(email, outputPath) {
   const authError = await checkAuth();
@@ -333,10 +356,19 @@ export async function downloadInvoiceWithBrowser(email, outputPath) {
   });
   
   let output = '';
+  const usage = emptyUsage();
+  let model = taskConfig.model.id;
+  let provider = taskConfig.model.provider;
   
   session.subscribe((event) => {
     if (event.type === 'message_update' && event.assistantMessageEvent?.type === 'text_delta') {
       output += event.assistantMessageEvent.delta;
+    }
+    // Collect token usage from turn_end events
+    if (event.type === 'turn_end' && event.message?.usage) {
+      addUsage(usage, event.message.usage);
+      model = event.message.model || model;
+      provider = event.message.provider || provider;
     }
   });
   
@@ -378,11 +410,14 @@ Return ONLY valid JSON (no markdown):
       jsonStr = objMatch[0];
     }
     
-    return JSON.parse(jsonStr);
+    const result = JSON.parse(jsonStr);
+    return { result, usage, model, provider };
   } catch (error) {
     return {
-      success: false,
-      error: error.message,
+      result: { success: false, error: error.message },
+      usage,
+      model,
+      provider,
     };
   } finally {
     session.dispose();

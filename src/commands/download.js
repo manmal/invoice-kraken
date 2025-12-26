@@ -13,6 +13,7 @@ import {
 import { downloadInvoiceWithBrowser, checkAuth } from '../lib/ai.js';
 import { hashFile } from '../utils/hash.js';
 import { getInvoiceOutputPath } from '../utils/paths.js';
+import { emptyUsage, addUsage, formatUsageReport } from '../lib/tokens.js';
 
 export async function downloadCommand(options) {
   const { account, batchSize = 5 } = options;
@@ -46,6 +47,11 @@ export async function downloadCommand(options) {
     failed: 0,
   };
   
+  // Track token usage
+  const usageByPhase = [];
+  let browserPhase = { phase: 'browserDownload', model: null, provider: null, calls: 0, usage: emptyUsage() };
+  usageByPhase.push(browserPhase);
+  
   // Process one at a time (browser automation is sequential)
   for (let i = 0; i < pendingEmails.length; i++) {
     const email = pendingEmails[i];
@@ -64,7 +70,13 @@ export async function downloadCommand(options) {
       console.log(`  Attempting download with browser automation...`);
       
       // Use browser automation to download
-      const result = await downloadInvoiceWithBrowser(email, outputPath);
+      const { result, usage, model, provider } = await downloadInvoiceWithBrowser(email, outputPath);
+      
+      // Track usage
+      browserPhase.calls += 1;
+      browserPhase.model = model;
+      browserPhase.provider = provider;
+      addUsage(browserPhase.usage, usage);
       
       if (result.success && result.path) {
         // Check if file exists
@@ -140,8 +152,13 @@ export async function downloadCommand(options) {
   console.log(`  🔐 Needs login: ${stats.needsLogin}`);
   console.log(`  ✗ Failed: ${stats.failed}`);
   
+  // Print token usage report
+  if (browserPhase.calls > 0) {
+    console.log(formatUsageReport(usageByPhase));
+  }
+  
   if (stats.needsLogin > 0 || stats.failed > 0) {
-    console.log(`\nRun "npm run list -- --account ${account}" to see items needing manual handling.`);
+    console.log(`Run "npm run list -- --account ${account}" to see items needing manual handling.`);
   }
 }
 

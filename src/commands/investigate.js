@@ -20,6 +20,7 @@ import { classifyDeductibility } from '../lib/vendors.js';
 import { generatePdfFromText } from '../lib/pdf.js';
 import { hashFile } from '../utils/hash.js';
 import { getInvoiceOutputPath, getInvoicesDir, ensureDir } from '../utils/paths.js';
+import { emptyUsage, addUsage, formatUsageReport } from '../lib/tokens.js';
 
 export async function investigateCommand(options) {
   const { account, batchSize = 10, autoDedup = false, strict = false } = options;
@@ -79,6 +80,9 @@ export async function investigateCommand(options) {
     errors: 0,
   };
   
+  // Track token usage per phase
+  const usageByPhase = [];
+  
   let batchNum = 0;
   for (const batch of batches) {
     batchNum++;
@@ -87,7 +91,16 @@ export async function investigateCommand(options) {
     console.log(`${'─'.repeat(50)}`);
     
     // Analyze batch with AI
-    const analyses = await analyzeEmailsForInvoices(batch);
+    const { results: analyses, usage, model, provider } = await analyzeEmailsForInvoices(batch);
+    
+    // Track usage for this batch
+    let classificationPhase = usageByPhase.find(p => p.phase === 'emailClassification');
+    if (!classificationPhase) {
+      classificationPhase = { phase: 'emailClassification', model, provider, calls: 0, usage: emptyUsage() };
+      usageByPhase.push(classificationPhase);
+    }
+    classificationPhase.calls += 1;
+    addUsage(classificationPhase.usage, usage);
     
     // Process each email
     for (let i = 0; i < batch.length; i++) {
@@ -110,8 +123,13 @@ export async function investigateCommand(options) {
   console.log(`  ⚠ Manual review: ${stats.manual}`);
   console.log(`  ✗ Errors: ${stats.errors}`);
   
+  // Print token usage report
+  if (usageByPhase.length > 0) {
+    console.log(formatUsageReport(usageByPhase));
+  }
+  
   if (stats.pendingDownload > 0) {
-    console.log(`\nRun "npm run download -- --account ${account}" to download remaining invoices.`);
+    console.log(`Run "npm run download -- --account ${account}" to download remaining invoices.`);
   }
   if (stats.manual > 0) {
     console.log(`Run "npm run list -- --account ${account}" to see items needing manual handling.`);
