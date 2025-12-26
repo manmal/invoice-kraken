@@ -1,24 +1,25 @@
 {
-  "name": "invoice-kraken",
+  "name": "kraxler",
   "version": "0.1.0",
   "description": "Search Gmail for invoices using gogcli and pi's scout/browser skills",
   "type": "module",
   "main": "src/index.js",
   "bin": {
-    "invoice-kraken": "./src/index.js"
+    "kraxler": "./src/index.js"
   },
   "scripts": {
-    "start": "bun src/index.js",
-    "search": "bun src/index.js search",
-    "investigate": "bun src/index.js investigate",
-    "download": "bun src/index.js download",
-    "list": "bun src/index.js list"
+    "start": "node src/index.js",
+    "search": "node src/index.js search",
+    "investigate": "node src/index.js investigate",
+    "download": "node src/index.js download",
+    "list": "node src/index.js list"
   },
   "keywords": [
     "invoice",
     "gmail",
     "automation",
-    "pdf"
+    "pdf",
+    "tax"
   ],
   "author": "Manuel Maly",
   "license": "MIT",
@@ -26,12 +27,13 @@
     "@mariozechner/pi-agent-core": "^0.30.2",
     "@mariozechner/pi-ai": "^0.30.2",
     "@mariozechner/pi-coding-agent": "^0.30.2",
-    "commander": "^12.1.0"
-  },
-  "devDependencies": {
-    "@types/bun": "^1.1.14"
+    "better-sqlite3": "^12.5.0",
+    "commander": "^12.1.0",
+    "env-paths": "^3.0.0",
+    "highlight.js": "^11.11.1",
+    "puppeteer-core": "^24.34.0"
   },
   "engines": {
-    "bun": ">=1.0.0"
+    "node": ">=18.0.0"
   }
 }

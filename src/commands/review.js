@@ -4,7 +4,7 @@
 
 import { getDb, getManualItems, getDeductibilitySummary, getEmailsByStatus } from '../lib/db.js';
 
-export async function listCommand(options) {
+export async function reviewCommand(options) {
   const { account, format = 'table', deductible: deductibleFilter, summary, includeDuplicates } = options;
   
   const db = getDb();
@@ -30,7 +30,7 @@ export async function listCommand(options) {
     const downloaded = getEmailsByStatus(account, 'downloaded', 10000);
     if (downloaded.length > 0) {
       console.log(`\n✓ ${downloaded.length} invoices have been downloaded.`);
-      console.log(`Run "npm run list -- --account ${account} --summary" for deductibility summary.`);
+      console.log(`Run "kraxler review --account ${account} --summary" for deductibility summary.`);
     }
     return;
   }

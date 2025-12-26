@@ -1,13 +1,17 @@
-# 🦑 Invoice Kraken
+<p align="center">
+  <img src="assets/logo.png" alt="Kraxler Logo" width="200">
+</p>
 
-Search Gmail for invoices using [gogcli](https://github.com/steipete/gogcli) and [pi](https://github.com/badlogic/pi-mono)'s AI capabilities. Automatically classifies invoices for Austrian Einzelunternehmer (sole proprietors) tax deductions.
+<h1 align="center">🇦🇹 Kraxler - Extract Invoices from Your Inbox</h1>
+
+Kraxler crawls your Gmail, finds invoices, downloads PDFs, and automatically classifies them for 🇦🇹 Austrian tax deductions. Stop manually hunting through emails at tax time—let AI do the heavy lifting.
 
 > ⚠️ **DISCLAIMER**: This tool provides tax deductibility suggestions based on the **Austrian tax system** (Einkommensteuer & Umsatzsteuer). These are for informational purposes only and do NOT constitute tax advice. Always consult a qualified Steuerberater for your specific situation.
 
 ## Features
 
 - 📧 Search Gmail for invoice-related emails (EN/DE search terms)
-- 🤖 AI-powered invoice classification using Claude (via pi SDK)
+- 🤖 AI-powered invoice classification (via [pi SDK](https://github.com/badlogic/pi-mono) - supports Claude, GPT, Gemini, local models)
 - 📎 Automatic PDF attachment download
 - 🌐 Browser-based invoice download for link-only emails
 - 💼 Austrian tax deductibility classification (EST + VAT)
@@ -19,7 +23,7 @@ Search Gmail for invoices using [gogcli](https://github.com/steipete/gogcli) and
 
 - [Bun](https://bun.sh/) runtime (>= 1.0)
 - [gogcli](https://github.com/steipete/gogcli) installed and configured with your Gmail account
-- Anthropic API access (via OAuth or API key)
+- pi model provider configured, e.g. Claude Pro or Max subscription (OAuth) or API key.
 
 ## Installation
 
@@ -45,17 +49,17 @@ gog auth credentials ~/Downloads/client_secret_*.json
 gog auth add your@gmail.com
 ```
 
-### 3. Install invoice-kraken
+### 3. Install kraxler
 
 ```bash
-git clone https://github.com/manmal/invoice-kraken
-cd invoice-kraken
+git clone https://github.com/manmal/kraxler
+cd kraxler
 bun install
 ```
 
 ### 4. Authenticate with Anthropic
 
-Invoice Kraken uses the pi SDK for AI capabilities. To authenticate:
+Kraxler uses the pi SDK for AI capabilities. To authenticate:
 
 ```bash
 # Option A: OAuth (recommended)
@@ -75,11 +79,13 @@ bun src/index.js search --account your@gmail.com --year 2024
 ```
 
 The setup wizard will ask about:
+
 - **Company car** - Do you have one? Is it electric (different VAT rules)?
 - **Kleinunternehmer status** - Are you under €55k revenue (no VAT recovery)?
 - **Business use percentages** - For phone/internet
 
 You can reconfigure anytime:
+
 ```bash
 bun src/index.js config --reset
 ```
@@ -110,6 +116,7 @@ bun src/index.js investigate --account your@gmail.com --auto-dedup
 ```
 
 This will:
+
 - Pre-filter obvious non-invoices (marketing, shipping notifications)
 - Use AI to classify each email
 - Extract invoice metadata (number, amount, date)
@@ -183,14 +190,14 @@ invoices/
 
 ### Categories
 
-| Category | Icon | Income Tax | VAT Recovery | Examples |
-|----------|------|------------|--------------|----------|
-| `full` | 💼 | 100% | ✅ Yes | Software, cloud, hardware, education |
-| `vehicle` | 🚗 | 100% | ❌ No (ICE) / ✅ Yes (Electric) | Fuel, ÖAMTC, ASFINAG, repairs |
-| `meals` | 🍽️ | 50% | ✅ Yes (100%!) | Business meals with clients |
-| `telecom` | 📱 | ~50% | ✅ Yes (~50%) | Mobile, internet |
-| `none` | 🚫 | 0% | ❌ No | Personal expenses |
-| `unclear` | ❓ | ? | ? | Needs review |
+| Category  | Icon | Income Tax | VAT Recovery                    | Examples                             |
+| --------- | ---- | ---------- | ------------------------------- | ------------------------------------ |
+| `full`    | 💼   | 100%       | ✅ Yes                          | Software, cloud, hardware, education |
+| `vehicle` | 🚗   | 100%       | ❌ No (ICE) / ✅ Yes (Electric) | Fuel, ÖAMTC, ASFINAG, repairs        |
+| `meals`   | 🍽️   | 50%        | ✅ Yes (100%!)                  | Business meals with clients          |
+| `telecom` | 📱   | ~50%       | ✅ Yes (~50%)                   | Mobile, internet                     |
+| `none`    | 🚫   | 0%         | ❌ No                           | Personal expenses                    |
+| `unclear` | ❓   | ?          | ?                               | Needs review                         |
 
 ### Key Austrian Rules
 
@@ -203,16 +210,110 @@ See [docs/austrian-tax-deductibility.md](docs/austrian-tax-deductibility.md) for
 
 ## AI Models
 
-Invoice Kraken uses Claude models via the pi SDK:
+Kraxler supports any model available via [pi](https://github.com/badlogic/pi-mono) - Claude, GPT, Gemini, local models via Ollama, and more.
 
-| Task | Model | Description |
-|------|-------|-------------|
-| Email classification | claude-3-5-haiku | Fast batch analysis |
-| Deductibility analysis | claude-3-5-haiku | Categorization |
-| Complex extraction | claude-sonnet-4-5 | Edge cases |
-| Browser download | claude-sonnet-4-5 | Website navigation |
+### Default Models
 
-To customize models, edit `src/lib/models.js`.
+| Task                   | Model             | Tier     | Description                    |
+| ---------------------- | ----------------- | -------- | ------------------------------ |
+| emailClassification    | claude-3-5-haiku  | fast     | Classify emails as invoices    |
+| deductibilityAnalysis  | claude-3-5-haiku  | fast     | Tax deductibility categorization |
+| complexExtraction      | claude-sonnet-4-5 | balanced | Extract from complex formats   |
+| browserDownload        | claude-sonnet-4-5 | balanced | Navigate websites for downloads |
+| duplicateDetection     | claude-3-5-haiku  | fast     | Fuzzy duplicate matching       |
+| reportGeneration       | claude-3-5-haiku  | fast     | Generate summary reports       |
+
+### Configuration Priority
+
+Model selection follows this priority order (highest to lowest):
+
+1. **CLI flags** (`--model`, `--provider`) - applies to current command only
+2. **Environment variables** (`KRAXLER_MODEL`, `KRAXLER_PROVIDER`)  
+3. **Per-task config** in config file → `models` object
+4. **Preset** in config file → `model_preset`
+5. **Hardcoded defaults** (table above)
+
+### Presets
+
+Quick configuration for common use cases:
+
+| Preset     | Description                                           |
+| ---------- | ----------------------------------------------------- |
+| `cheap`    | Fast & cheap models for all tasks (haiku/flash/4o-mini) |
+| `balanced` | **Default** - fast for simple tasks, smart for complex |
+| `quality`  | Best models for all tasks (sonnet/pro/4o)             |
+| `local`    | Local models via Ollama (free, private, requires setup) |
+
+```bash
+npx kraxler config --set model_preset=cheap
+npx kraxler config --set model_preset=balanced
+npx kraxler config --set model_preset=quality
+npx kraxler config --set model_preset=local
+```
+
+### Customizing Models
+
+**Interactive setup** (recommended for first-time configuration):
+```bash
+npx kraxler config --models
+```
+
+**CLI override** (applies to current command only):
+```bash
+npx kraxler investigate -a x@gmail.com --model gemini-2.5-flash --provider google
+npx kraxler investigate -a x@gmail.com --model gpt-4o --provider openai
+npx kraxler download -a x@gmail.com --model claude-opus-4 --provider anthropic
+```
+
+**Environment variables** (useful for CI/scripts):
+```bash
+KRAXLER_MODEL=gpt-4o KRAXLER_PROVIDER=openai npx kraxler investigate -a x@gmail.com
+```
+
+**Config file** for persistent per-task overrides:
+
+Location: `~/.config/kraxler/config.json` (Linux) or `~/Library/Preferences/kraxler/config.json` (macOS)
+
+```json
+{
+  "model_preset": "balanced",
+  "models": {
+    "browserDownload": { "provider": "anthropic", "modelId": "claude-opus-4" },
+    "emailClassification": { "provider": "google", "modelId": "gemini-2.0-flash" }
+  }
+}
+```
+
+Note: Per-task `models` overrides take precedence over `model_preset`.
+
+### View Configuration
+
+```bash
+# Show current model configuration with sources
+npx kraxler models
+
+# Show all available models from configured providers
+npx kraxler models --available
+
+# Show preset descriptions
+npx kraxler models --presets
+```
+
+Example output:
+```
+📋 Model Configuration
+
+Active preset: balanced
+
+Task                    Provider    Model                   Source
+──────────────────────────────────────────────────────────────────────────────
+emailClassification     anthropic   claude-3-5-haiku-lates  preset: balanced
+deductibilityAnalysis   anthropic   claude-3-5-haiku-lates  preset: balanced
+complexExtraction       anthropic   claude-sonnet-4-5       preset: balanced
+browserDownload         anthropic   claude-sonnet-4-5       preset: balanced
+duplicateDetection      anthropic   claude-3-5-haiku-lates  preset: balanced
+reportGeneration        anthropic   claude-3-5-haiku-lates  preset: balanced
+```
 
 ### Token Usage Tracking
 
@@ -234,7 +335,7 @@ Usage is tracked per phase (emailClassification, browserDownload, etc.) with inp
 
 ## Configuration
 
-### Config file: `.invoice-kraken/config.json`
+### Config file: `.kraxler/config.json`
 
 ```json
 {
@@ -256,7 +357,7 @@ Usage is tracked per phase (emailClassification, browserDownload, etc.) with inp
 
 ## Database
 
-Invoice data is stored in `invoice-kraken.db` (SQLite).
+Invoice data is stored in `kraxler.db` (SQLite).
 
 ### Status flow
 
@@ -272,6 +373,7 @@ pending → prefiltered (auto-skip, stored with reason)
 ## Duplicate Detection
 
 Multi-layer detection:
+
 1. **Email ID** - Same email won't be processed twice
 2. **Invoice Number** - Same invoice number from same sender
 3. **Attachment Hash** - Identical PDF files

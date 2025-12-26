@@ -1,5 +1,5 @@
 /**
- * Token usage utilities for Invoice Kraken
+ * Token usage utilities for Kraxler
  * 
  * Helper functions for formatting and aggregating token usage.
  */

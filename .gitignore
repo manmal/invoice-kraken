@@ -39,4 +39,12 @@ coverage/
 # Temp files
 tmp/
 .tmp/
-.invoice-kraken/
+.kraxler/
+
+# Lock files (use package-lock.json for npm)
+bun.lock
+
+# Generated/temp files
+email-tax-analysis.json
+assets/
+scripts/

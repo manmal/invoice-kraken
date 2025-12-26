@@ -20,9 +20,10 @@ import {
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
-import { getModelForTask, MODEL_CONFIG } from './models.js';
+import { getModelForTask, DEFAULT_MODEL_CONFIG } from './models.js';
 import { loadConfig, getVehicleVatRecovery, getTelecomBusinessPercent, isKleinunternehmer } from './config.js';
 import { emptyUsage, addUsage } from './tokens.js';
+import { getEmailBodiesBatch, getTruncatedBody } from './email-cache.js';
 
 let authStorage = null;
 let modelRegistry = null;
@@ -101,14 +102,26 @@ export async function checkAuth() {
  * 
  * @param {string} prompt - The prompt to send
  * @param {string} task - Task name for model selection
+ * @param {string} [modelOverride] - Override model ID (e.g., 'claude-opus-4-5')
  * @returns {Promise<{output: string, usage: Object, model: string, provider: string}>}
  */
-async function simplePrompt(prompt, task = 'emailClassification') {
+async function simplePrompt(prompt, task = 'emailClassification', modelOverride = null) {
   const { authStorage, modelRegistry } = initAuth();
   
   const taskConfig = getModelForTask(task);
   if (!taskConfig) {
     throw new Error(`Unknown task: ${task}`);
+  }
+  
+  // Allow model override for comparison testing
+  let modelToUse = taskConfig.model;
+  if (modelOverride) {
+    const overrideModel = modelRegistry.find('anthropic', modelOverride);
+    if (overrideModel) {
+      modelToUse = overrideModel;
+    } else {
+      console.warn(`Model override '${modelOverride}' not found, using default`);
+    }
   }
   
   const { session } = await createAgentSession({
@@ -119,9 +132,10 @@ async function simplePrompt(prompt, task = 'emailClassification') {
     }),
     authStorage,
     modelRegistry,
-    model: taskConfig.model,
+    model: modelToUse,
     thinkingLevel: taskConfig.thinkingLevel,
     tools: [], // No tools for simple classification
+    customTools: [], // Prevent subagent discovery
     skills: [],
     hooks: [],
     contextFiles: [],
@@ -130,8 +144,8 @@ async function simplePrompt(prompt, task = 'emailClassification') {
   
   let output = '';
   const usage = emptyUsage();
-  let model = taskConfig.model.id;
-  let provider = taskConfig.model.provider;
+  let modelId = modelToUse.id;
+  let providerId = modelToUse.provider;
   
   session.subscribe((event) => {
     if (event.type === 'message_update' && event.assistantMessageEvent?.type === 'text_delta') {
@@ -140,14 +154,14 @@ async function simplePrompt(prompt, task = 'emailClassification') {
     // Collect token usage from turn_end events
     if (event.type === 'turn_end' && event.message?.usage) {
       addUsage(usage, event.message.usage);
-      model = event.message.model || model;
-      provider = event.message.provider || provider;
+      modelId = event.message.model || modelId;
+      providerId = event.message.provider || providerId;
     }
   });
   
   try {
     await session.prompt(prompt);
-    return { output: output.trim(), usage, model, provider };
+    return { output: output.trim(), usage, model: modelId, provider: providerId };
   } finally {
     session.dispose();
   }
@@ -155,6 +169,7 @@ async function simplePrompt(prompt, task = 'emailClassification') {
 
 /**
  * Build the email classification prompt with user config context
+ * @param {Object[]} emails - Emails with optional bodyPreview field
  */
 function buildClassificationPrompt(emails) {
   const config = loadConfig();
@@ -168,6 +183,7 @@ function buildClassificationPrompt(emails) {
     sender: e.sender,
     date: e.date,
     snippet: e.snippet,
+    bodyPreview: e.bodyPreview || null, // Truncated body content (max 1KB)
     hasAttachment: e.raw_json ? JSON.parse(e.raw_json).payload?.parts?.some(p => p.filename) : false,
   })), null, 2);
   
@@ -189,13 +205,34 @@ function buildClassificationPrompt(emails) {
   
   return `Analyze these emails and categorize each one for invoice processing.
 
+CRITICAL RULES FOR "has_invoice":
+═══════════════════════════════════════════════════════════════════════════════
+YES - These ARE invoices/receipts:
+  • PayPal "Receipt for Your Payment to [merchant]" - ALWAYS an invoice!
+  • Subject contains "Rechnung" (German for invoice)
+  • Subject contains "Invoice" or "Receipt from"  
+  • Subject contains "Ihre Rechnung" or "Deine Rechnung"
+  • Subject contains "Beleg für" (receipt for)
+  • Stripe/Paddle receipts
+
+NO - These are NOT invoices:
+  • "Order confirmed" / "Bestellung bestätigt" - just confirmation, invoice comes later
+  • "Subscription will renew soon" - reminder, not actual invoice
+  • "Payment authorized" / "authorized a payment" - authorization ≠ receipt
+  • "Shipment" / "Versendet" / "shipped" - shipping notification
+  • "Refunded" / "Refund" - refund notification
+  • "Rücksendung" - return notification
+  • "good to go" / "welcome" - confirmation messages
+  • Marketing emails with "sale" / "rabatt" / "discount"
+═══════════════════════════════════════════════════════════════════════════════
+
 USER CONFIGURATION:
 - ${vehicleContext}
 - ${vatContext}
 - Telecom/internet business use: ${telecomPercent}%
 
 For each email, determine:
-1. Does it contain an invoice? (yes/no/uncertain)
+1. Does it contain an invoice? (yes/no/uncertain) - USE THE RULES ABOVE!
 2. Invoice type:
    - text (invoice content is in email body)
    - pdf_attachment (has PDF attachment)
@@ -275,9 +312,11 @@ Return ONLY a valid JSON array with this structure:
 /**
  * Analyze emails for invoice classification
  * @param {Object[]} emails - Emails to analyze
+ * @param {Object} [options] - Options
+ * @param {string} [options.modelOverride] - Override model ID (e.g., 'claude-opus-4-5')
  * @returns {Promise<{results: Object[], usage: Object, model: string, provider: string}>}
  */
-export async function analyzeEmailsForInvoices(emails) {
+export async function analyzeEmailsForInvoices(emails, options = {}) {
   // Check authentication first
   const authError = await checkAuth();
   if (authError) {
@@ -285,10 +324,27 @@ export async function analyzeEmailsForInvoices(emails) {
     throw new Error('Authentication required. Run `pi` and use `/login` to authenticate.');
   }
   
-  const prompt = buildClassificationPrompt(emails);
+  // Fetch email bodies (cached) if account is provided
+  const account = options.account;
+  let enrichedEmails = emails;
+  
+  if (account) {
+    const messageIds = emails.map(e => e.id);
+    const bodies = await getEmailBodiesBatch(account, messageIds, 4);
+    
+    enrichedEmails = emails.map(e => {
+      const body = bodies.get(e.id);
+      return {
+        ...e,
+        bodyPreview: body ? getTruncatedBody(body.textBody, body.htmlBody, 1024) : null,
+      };
+    });
+  }
+  
+  const prompt = buildClassificationPrompt(enrichedEmails);
   
   try {
-    const { output, usage, model, provider } = await simplePrompt(prompt, 'emailClassification');
+    const { output, usage, model, provider } = await simplePrompt(prompt, 'emailClassification', options.modelOverride);
     
     // Extract JSON from response (it might have markdown code blocks)
     let jsonStr = output;
@@ -323,103 +379,4 @@ export async function analyzeEmailsForInvoices(emails) {
   }
 }
 
-/**
- * Download invoice via browser automation
- * This still uses a full agent session with tools
- * @returns {Promise<{result: Object, usage: Object, model: string, provider: string}>}
- */
-export async function downloadInvoiceWithBrowser(email, outputPath) {
-  const authError = await checkAuth();
-  if (authError) {
-    console.error(authError);
-    throw new Error('Authentication required');
-  }
-  
-  const { authStorage, modelRegistry } = initAuth();
-  const taskConfig = getModelForTask('browserDownload');
-  
-  if (!taskConfig) {
-    throw new Error('Browser download task not configured');
-  }
-  
-  const { session } = await createAgentSession({
-    sessionManager: SessionManager.inMemory(),
-    settingsManager: SettingsManager.inMemory({
-      compaction: { enabled: false },
-      retry: { enabled: true, maxRetries: 2 },
-    }),
-    authStorage,
-    modelRegistry,
-    model: taskConfig.model,
-    thinkingLevel: taskConfig.thinkingLevel,
-    // Use default tools for browser operations
-  });
-  
-  let output = '';
-  const usage = emptyUsage();
-  let model = taskConfig.model.id;
-  let provider = taskConfig.model.provider;
-  
-  session.subscribe((event) => {
-    if (event.type === 'message_update' && event.assistantMessageEvent?.type === 'text_delta') {
-      output += event.assistantMessageEvent.delta;
-    }
-    // Collect token usage from turn_end events
-    if (event.type === 'turn_end' && event.message?.usage) {
-      addUsage(usage, event.message.usage);
-      model = event.message.model || model;
-      provider = event.message.provider || provider;
-    }
-  });
-  
-  const prompt = `Download the invoice from this email.
-
-Email details:
-- Subject: ${email.subject}
-- From: ${email.sender}
-- Date: ${email.date}
-- Body/Notes: ${email.notes || email.snippet}
-
-Instructions:
-1. Use the browser skill to navigate to any invoice download link
-2. If login is required, note it and skip (don't try to log in)
-3. If invoice PDF is available, download it to: ${outputPath}
-4. If there's no downloadable invoice, explain why
-
-Return ONLY valid JSON (no markdown):
-{
-  "success": true/false,
-  "path": "path to downloaded file or null",
-  "needs_login": true/false,
-  "login_url": "URL if login needed",
-  "error": "error message if failed"
-}`;
-
-  try {
-    await session.prompt(prompt);
-    
-    // Extract JSON from output
-    let jsonStr = output;
-    const jsonMatch = output.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (jsonMatch) {
-      jsonStr = jsonMatch[1];
-    }
-    
-    const objMatch = jsonStr.match(/\{[\s\S]*\}/);
-    if (objMatch) {
-      jsonStr = objMatch[0];
-    }
-    
-    const result = JSON.parse(jsonStr);
-    return { result, usage, model, provider };
-  } catch (error) {
-    return {
-      result: { success: false, error: error.message },
-      usage,
-      model,
-      provider,
-    };
-  } finally {
-    session.dispose();
-  }
-}
+// Browser download is now handled directly in src/lib/browser.js

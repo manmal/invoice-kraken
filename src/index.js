@@ -1,7 +1,7 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 
 /**
- * Invoice Kraken - Search Gmail for invoices using gogcli and pi's scout/browser skills
+ * Kraxler - Invoice extraction from Gmail with AI-powered classification
  * 
  * ⚠️  DISCLAIMER: This tool provides tax deductibility suggestions based on the
  * AUSTRIAN TAX SYSTEM. These are for informational purposes only and do NOT
@@ -9,36 +9,42 @@
  */
 
 import { Command } from 'commander';
-import { searchCommand } from './commands/search.js';
-import { investigateCommand } from './commands/investigate.js';
-import { downloadCommand } from './commands/download.js';
-import { listCommand } from './commands/list.js';
+import { scanCommand } from './commands/scan.js';
+import { extractCommand } from './commands/extract.js';
+import { crawlCommand } from './commands/crawl.js';
+import { reviewCommand } from './commands/review.js';
 import { statusCommand } from './commands/status.js';
 import { logCommand } from './commands/log.js';
 import { configCommand } from './commands/config.js';
 import { modelsCommand } from './commands/models.js';
 import { closeDb } from './lib/db.js';
 import { needsSetup, runSetupWizard } from './lib/config.js';
+import { printPaths, getAllPaths } from './lib/paths.js';
+import { setModelOverrides } from './lib/models.js';
 
 const program = new Command();
 
 program
-  .name('invoice-kraken')
-  .description('🦑 Search Gmail for invoices using gogcli and pi')
+  .name('kraxler')
+  .description('🦑 Invoice extraction from Gmail with AI-powered classification')
   .version('0.1.0');
 
+// ============================================================================
+// MAIN PIPELINE COMMANDS
+// ============================================================================
+
 program
-  .command('search')
-  .description('Search Gmail for invoice-related emails')
+  .command('scan')
+  .description('Stage 1: Scan Gmail for invoice-related emails')
   .requiredOption('-a, --account <email>', 'Gmail account to use')
-  .requiredOption('-y, --year <year>', 'Year to search (e.g., 2024)')
+  .requiredOption('-y, --year <year>', 'Year to scan (e.g., 2024)')
   .option('--from <month>', 'Start month (1-12, default: 1)', '1')
   .option('--to <month>', 'End month (1-12, default: 12)', '12')
   .action(async (options) => {
     try {
       options.fromMonth = parseInt(options.from, 10);
       options.toMonth = parseInt(options.to, 10);
-      await searchCommand(options);
+      await scanCommand(options);
     } catch (error) {
       console.error('Error:', error.message);
       process.exit(1);
@@ -48,16 +54,21 @@ program
   });
 
 program
-  .command('investigate')
-  .description('Investigate found emails and filter/extract invoices')
+  .command('extract')
+  .description('Stage 2: Extract invoices from emails using AI classification')
   .requiredOption('-a, --account <email>', 'Gmail account to use')
   .option('-b, --batch-size <n>', 'Number of emails to process per batch', '10')
   .option('--auto-dedup', 'Automatically mark high-confidence duplicates')
   .option('--strict', 'Also auto-mark medium-confidence duplicates')
+  .option('--model <id>', 'Override AI model (e.g., gemini-2.5-flash, gpt-4o)')
+  .option('--provider <name>', 'Override AI provider (e.g., google, openai, anthropic)')
   .action(async (options) => {
     try {
+      if (options.model || options.provider) {
+        setModelOverrides({ model: options.model, provider: options.provider });
+      }
       options.batchSize = parseInt(options.batchSize, 10);
-      await investigateCommand(options);
+      await extractCommand(options);
     } catch (error) {
       console.error('Error:', error.message);
       process.exit(1);
@@ -67,14 +78,14 @@ program
   });
 
 program
-  .command('download')
-  .description('Download remaining invoices using pi scout/browser')
+  .command('crawl')
+  .description('Stage 3: Crawl links to download remaining invoices via browser')
   .requiredOption('-a, --account <email>', 'Gmail account to use')
   .option('-b, --batch-size <n>', 'Number of invoices to process per batch', '5')
   .action(async (options) => {
     try {
       options.batchSize = parseInt(options.batchSize, 10);
-      await downloadCommand(options);
+      await crawlCommand(options);
     } catch (error) {
       console.error('Error:', error.message);
       process.exit(1);
@@ -84,8 +95,8 @@ program
   });
 
 program
-  .command('list')
-  .description('List remaining invoices that need manual handling')
+  .command('review')
+  .description('Stage 4: Review items needing manual handling')
   .requiredOption('-a, --account <email>', 'Gmail account to use')
   .option('-f, --format <format>', 'Output format: table, json, markdown', 'table')
   .option('-d, --deductible <type>', 'Filter by deductibility: full, partial, none, unclear')
@@ -95,7 +106,7 @@ program
   .action(async (options) => {
     try {
       if (options.year) options.year = parseInt(options.year, 10);
-      await listCommand(options);
+      await reviewCommand(options);
     } catch (error) {
       console.error('Error:', error.message);
       process.exit(1);
@@ -103,6 +114,10 @@ program
       closeDb();
     }
   });
+
+// ============================================================================
+// UTILITY COMMANDS
+// ============================================================================
 
 program
   .command('status')
@@ -143,6 +158,7 @@ program
   .option('--reset', 'Reset configuration and run setup wizard again')
   .option('--show', 'Show current configuration')
   .option('--set <key=value>', 'Set a specific configuration value')
+  .option('--models', 'Interactive model configuration')
   .action(async (options) => {
     try {
       await configCommand(options);
@@ -155,6 +171,8 @@ program
 program
   .command('models')
   .description('View AI model configuration and auth status')
+  .option('--available', 'Show all available models')
+  .option('--presets', 'Show available presets')
   .action(async (options) => {
     try {
       await modelsCommand(options);
@@ -164,12 +182,32 @@ program
     }
   });
 
-// Check for first-run setup before any command that needs config
-const setupRequiredCommands = ['search', 'investigate', 'download', 'list', 'status'];
+program
+  .command('paths')
+  .description('Show storage locations (database, config, cache)')
+  .option('--json', 'Output as JSON')
+  .action((options) => {
+    if (options.json) {
+      console.log(JSON.stringify(getAllPaths(), null, 2));
+    } else {
+      printPaths();
+    }
+  });
+
+// ============================================================================
+// SETUP & ERROR HANDLING
+// ============================================================================
+
+const setupRequiredCommands = ['scan', 'extract', 'crawl', 'review', 'status'];
 const originalParse = program.parse.bind(program);
 program.parse = async function(args) {
-  // Check if running a command that needs setup
-  const commandArg = args?.[2] || process.argv[2];
+  const allArgs = args || process.argv;
+  
+  if (allArgs.includes('--help') || allArgs.includes('-h')) {
+    return originalParse(args);
+  }
+  
+  const commandArg = allArgs[2];
   
   if (setupRequiredCommands.includes(commandArg) && needsSetup()) {
     console.log('First run detected. Running initial setup...\n');
@@ -179,7 +217,6 @@ program.parse = async function(args) {
   return originalParse(args);
 };
 
-// Handle uncaught errors
 process.on('uncaughtException', (error) => {
   console.error('Uncaught error:', error.message);
   closeDb();

@@ -1,11 +1,11 @@
 /**
- * SQLite database helpers using Bun's native SQLite
+ * SQLite database helpers using better-sqlite3
  */
 
-import { Database } from 'bun:sqlite';
-import path from 'path';
+import Database from 'better-sqlite3';
+import { getDatabasePath } from './paths.js';
 
-const DB_PATH = path.join(process.cwd(), 'invoice-kraken.db');
+const DB_PATH = getDatabasePath();
 
 let db = null;
 
@@ -89,24 +89,24 @@ export function insertEmail(email) {
       id, thread_id, account, year, month, subject, sender, sender_domain,
       date, snippet, labels, raw_json, status
     ) VALUES (
-      $id, $thread_id, $account, $year, $month, $subject, $sender, $sender_domain,
-      $date, $snippet, $labels, $raw_json, 'pending'
+      @id, @thread_id, @account, @year, @month, @subject, @sender, @sender_domain,
+      @date, @snippet, @labels, @raw_json, 'pending'
     )
   `);
   
   const result = stmt.run({
-    $id: email.id,
-    $thread_id: email.thread_id,
-    $account: email.account,
-    $year: email.year,
-    $month: email.month,
-    $subject: email.subject,
-    $sender: email.sender,
-    $sender_domain: email.sender_domain,
-    $date: email.date,
-    $snippet: email.snippet,
-    $labels: email.labels,
-    $raw_json: email.raw_json,
+    id: email.id,
+    thread_id: email.thread_id,
+    account: email.account,
+    year: email.year,
+    month: email.month,
+    subject: email.subject,
+    sender: email.sender,
+    sender_domain: email.sender_domain,
+    date: email.date,
+    snippet: email.snippet,
+    labels: email.labels,
+    raw_json: email.raw_json,
   });
   
   return result.changes > 0;
@@ -116,34 +116,34 @@ export function getEmailsByStatus(account, status, limit = 100) {
   const db = getDb();
   const stmt = db.prepare(`
     SELECT * FROM emails 
-    WHERE account = $account AND status = $status
+    WHERE account = @account AND status = @status
     ORDER BY date ASC
-    LIMIT $limit
+    LIMIT @limit
   `);
-  return stmt.all({ $account: account, $status: status, $limit: limit });
+  return stmt.all({ account, status, limit });
 }
 
 export function getEmailById(id, account) {
   const db = getDb();
-  const stmt = db.prepare(`SELECT * FROM emails WHERE id = $id AND account = $account`);
-  return stmt.get({ $id: id, $account: account });
+  const stmt = db.prepare(`SELECT * FROM emails WHERE id = @id AND account = @account`);
+  return stmt.get({ id, account });
 }
 
 export function updateEmailStatus(id, account, status, extra = {}) {
   const db = getDb();
-  const updates = ['status = $status', 'updated_at = CURRENT_TIMESTAMP'];
-  const params = { $status: status, $id: id, $account: account };
+  const updates = ['status = @status', 'updated_at = CURRENT_TIMESTAMP'];
+  const params = { status, id, account };
   
   let paramIndex = 0;
   for (const [key, value] of Object.entries(extra)) {
-    const paramName = `$p${paramIndex++}`;
-    updates.push(`${key} = ${paramName}`);
+    const paramName = `p${paramIndex++}`;
+    updates.push(`${key} = @${paramName}`);
     params[paramName] = value;
   }
   
   const stmt = db.prepare(`
     UPDATE emails SET ${updates.join(', ')}
-    WHERE id = $id AND account = $account
+    WHERE id = @id AND account = @account
   `);
   return stmt.run(params);
 }
@@ -152,47 +152,36 @@ export function findDuplicateByInvoiceNumber(invoiceNumber, senderDomain, exclud
   const db = getDb();
   const stmt = db.prepare(`
     SELECT id FROM emails 
-    WHERE invoice_number = $invoiceNumber AND sender_domain = $senderDomain AND id != $excludeId AND account = $account
+    WHERE invoice_number = @invoiceNumber AND sender_domain = @senderDomain AND id != @excludeId AND account = @account
     AND status NOT IN ('no_invoice', 'duplicate')
     LIMIT 1
   `);
-  return stmt.get({ 
-    $invoiceNumber: invoiceNumber, 
-    $senderDomain: senderDomain, 
-    $excludeId: excludeId, 
-    $account: account 
-  });
+  return stmt.get({ invoiceNumber, senderDomain, excludeId, account });
 }
 
 export function findDuplicateByHash(hash, excludeId, account) {
   const db = getDb();
   const stmt = db.prepare(`
     SELECT id FROM emails 
-    WHERE attachment_hash = $hash AND id != $excludeId AND account = $account
+    WHERE attachment_hash = @hash AND id != @excludeId AND account = @account
     LIMIT 1
   `);
-  return stmt.get({ $hash: hash, $excludeId: excludeId, $account: account });
+  return stmt.get({ hash, excludeId, account });
 }
 
 export function findDuplicateByFuzzyMatch(senderDomain, amount, invoiceDate, excludeId, account) {
   const db = getDb();
   const stmt = db.prepare(`
     SELECT id FROM emails 
-    WHERE sender_domain = $senderDomain 
-      AND invoice_amount = $amount 
-      AND ABS(julianday(invoice_date) - julianday($invoiceDate)) <= 7
-      AND id != $excludeId
-      AND account = $account
+    WHERE sender_domain = @senderDomain 
+      AND invoice_amount = @amount 
+      AND ABS(julianday(invoice_date) - julianday(@invoiceDate)) <= 7
+      AND id != @excludeId
+      AND account = @account
       AND status NOT IN ('no_invoice', 'duplicate')
     LIMIT 1
   `);
-  return stmt.get({ 
-    $senderDomain: senderDomain, 
-    $amount: amount, 
-    $invoiceDate: invoiceDate, 
-    $excludeId: excludeId, 
-    $account: account 
-  });
+  return stmt.get({ senderDomain, amount, invoiceDate, excludeId, account });
 }
 
 export function getDeductibilitySummary(account, year = null) {
@@ -203,13 +192,13 @@ export function getDeductibilitySummary(account, year = null) {
       COUNT(*) as count,
       SUM(invoice_amount_cents) as total_cents
     FROM emails 
-    WHERE account = $account AND status = 'downloaded'
+    WHERE account = @account AND status = 'downloaded'
   `;
-  const params = { $account: account };
+  const params = { account };
   
   if (year) {
-    query += ' AND year = $year';
-    params.$year = year;
+    query += ' AND year = @year';
+    params.year = year;
   }
   
   query += ' GROUP BY deductible';
@@ -222,13 +211,13 @@ export function getManualItems(account, deductibleFilter = null) {
   const db = getDb();
   let query = `
     SELECT * FROM emails 
-    WHERE account = $account AND status = 'manual'
+    WHERE account = @account AND status = 'manual'
   `;
-  const params = { $account: account };
+  const params = { account };
   
   if (deductibleFilter) {
-    query += ' AND deductible = $deductible';
-    params.$deductible = deductibleFilter;
+    query += ' AND deductible = @deductible';
+    params.deductible = deductibleFilter;
   }
   
   query += ' ORDER BY date DESC';

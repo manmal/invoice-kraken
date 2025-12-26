@@ -17,12 +17,12 @@ import { getMessage, downloadAttachment } from '../lib/gog.js';
 import { analyzeEmailsForInvoices, checkAuth } from '../lib/ai.js';
 import { extractInvoiceData, parseAmountToCents } from '../lib/extract.js';
 import { classifyDeductibility } from '../lib/vendors.js';
-import { generatePdfFromText } from '../lib/pdf.js';
+import { generatePdfFromText, generatePdfFromEmailHtml } from '../lib/pdf.js';
 import { hashFile } from '../utils/hash.js';
 import { getInvoiceOutputPath, getInvoicesDir, ensureDir } from '../utils/paths.js';
 import { emptyUsage, addUsage, formatUsageReport } from '../lib/tokens.js';
 
-export async function investigateCommand(options) {
+export async function extractCommand(options) {
   const { account, batchSize = 10, autoDedup = false, strict = false } = options;
   
   console.log(`Investigating emails for account: ${account}`);
@@ -41,7 +41,7 @@ export async function investigateCommand(options) {
   
   if (pendingEmails.length === 0) {
     console.log('No pending emails to investigate.');
-    console.log('Run "npm run search" first to find invoice emails.');
+    console.log('Run "kraxler scan" first to find invoice emails.');
     return;
   }
   
@@ -90,8 +90,8 @@ export async function investigateCommand(options) {
     console.log(`Batch ${batchNum}/${batches.length}: Analyzing ${batch.length} emails...`);
     console.log(`${'─'.repeat(50)}`);
     
-    // Analyze batch with AI
-    const { results: analyses, usage, model, provider } = await analyzeEmailsForInvoices(batch);
+    // Analyze batch with AI (pass account for email body fetching)
+    const { results: analyses, usage, model, provider } = await analyzeEmailsForInvoices(batch, { account });
     
     // Track usage for this batch
     let classificationPhase = usageByPhase.find(p => p.phase === 'emailClassification');
@@ -129,10 +129,10 @@ export async function investigateCommand(options) {
   }
   
   if (stats.pendingDownload > 0) {
-    console.log(`Run "npm run download -- --account ${account}" to download remaining invoices.`);
+    console.log(`Run "kraxler crawl --account ${account}" to download remaining invoices.`);
   }
   if (stats.manual > 0) {
-    console.log(`Run "npm run list -- --account ${account}" to see items needing manual handling.`);
+    console.log(`Run "kraxler review --account ${account}" to see items needing manual handling.`);
   }
 }
 
@@ -199,9 +199,6 @@ async function processEmail(email, analysis, account, options, stats) {
       return;
     }
     
-    // Process based on invoice type
-    const invoiceType = analysis.invoice_type || 'unknown';
-    
     // Common extra data for all handlers
     const extraData = {
       deductible,
@@ -211,10 +208,22 @@ async function processEmail(email, analysis, account, options, stats) {
       invoice_amount_cents: amountCents,
     };
     
+    // IMPORTANT: Always check for PDF attachments first, regardless of AI classification
+    // The AI sometimes misclassifies pdf_attachment as text
+    const fullMessage = await getMessage(account, email.id);
+    const pdfAttachment = fullMessage ? findPdfAttachment(fullMessage) : null;
+    
+    // Determine actual invoice type - prioritize PDF attachment if found
+    let invoiceType = analysis.invoice_type || 'unknown';
+    if (pdfAttachment && invoiceType !== 'pdf_attachment') {
+      console.log(`    (Correcting type: ${invoiceType} → pdf_attachment, found: ${pdfAttachment.filename})`);
+      invoiceType = 'pdf_attachment';
+    }
+    
     if (invoiceType === 'pdf_attachment') {
-      await handlePdfAttachment(email, analysis, account, stats, extraData);
+      await handlePdfAttachment(email, analysis, account, stats, extraData, fullMessage, pdfAttachment);
     } else if (invoiceType === 'text') {
-      await handleTextInvoice(email, analysis, account, stats, extraData);
+      await handleTextInvoice(email, analysis, account, stats, extraData, fullMessage);
     } else if (invoiceType === 'link') {
       updateEmailStatus(email.id, account, 'pending_download', {
         invoice_type: 'link',
@@ -249,11 +258,11 @@ async function processEmail(email, analysis, account, options, stats) {
   }
 }
 
-async function handlePdfAttachment(email, analysis, account, stats, extra) {
+async function handlePdfAttachment(email, analysis, account, stats, extra, preloadedMessage = null, preloadedAttachment = null) {
   const { deductible, deductible_reason, income_tax_percent, vat_recoverable, invoice_amount_cents } = extra;
   
-  // Get full message to find attachment
-  const fullMessage = await getMessage(account, email.id);
+  // Use pre-loaded message if available, otherwise fetch
+  const fullMessage = preloadedMessage || await getMessage(account, email.id);
   
   if (!fullMessage) {
     updateEmailStatus(email.id, account, 'manual', {
@@ -266,8 +275,8 @@ async function handlePdfAttachment(email, analysis, account, stats, extra) {
     return;
   }
   
-  // Find PDF attachment
-  const attachment = findPdfAttachment(fullMessage);
+  // Use pre-loaded attachment if available, otherwise find it
+  const attachment = preloadedAttachment || findPdfAttachment(fullMessage);
   
   if (!attachment) {
     updateEmailStatus(email.id, account, 'manual', {
@@ -330,11 +339,11 @@ async function handlePdfAttachment(email, analysis, account, stats, extra) {
   stats.downloaded++;
 }
 
-async function handleTextInvoice(email, analysis, account, stats, extra) {
+async function handleTextInvoice(email, analysis, account, stats, extra, preloadedMessage = null) {
   const { deductible, deductible_reason, income_tax_percent, vat_recoverable, invoice_amount_cents } = extra;
   
-  // Get full message
-  const fullMessage = await getMessage(account, email.id);
+  // Use pre-loaded message if available, otherwise fetch
+  const fullMessage = preloadedMessage || await getMessage(account, email.id);
   
   if (!fullMessage) {
     updateEmailStatus(email.id, account, 'manual', {
@@ -347,13 +356,13 @@ async function handleTextInvoice(email, analysis, account, stats, extra) {
     return;
   }
   
-  // Extract text content
-  const textContent = extractTextContent(fullMessage);
+  // Check if email has HTML content - prefer rendering HTML for better formatting
+  const emailContent = extractEmailContent(fullMessage);
   
-  if (!textContent) {
+  if (!emailContent.text && !emailContent.html) {
     updateEmailStatus(email.id, account, 'manual', {
       invoice_type: 'text',
-      notes: 'Could not extract text content',
+      notes: 'Could not extract email content',
       ...extra,
     });
     console.log(`  ⚠ ${truncate(email.subject, 50)} - No text content`);
@@ -368,13 +377,21 @@ async function handleTextInvoice(email, analysis, account, stats, extra) {
     analysis.invoice_number
   );
   
-  await generatePdfFromText(textContent, {
+  const metadata = {
     subject: email.subject,
     sender: email.sender,
     date: email.date,
     invoiceNumber: analysis.invoice_number,
     amount: analysis.amount,
-  }, outputPath);
+  };
+  
+  // Use HTML rendering if we have HTML content (better formatting for receipts)
+  // Fall back to text rendering if only plain text available
+  if (emailContent.html) {
+    await generatePdfFromEmailHtml(emailContent.html, metadata, outputPath);
+  } else {
+    await generatePdfFromText(emailContent.text, metadata, outputPath);
+  }
   
   // Hash the generated file
   let fileHash = null;
@@ -470,40 +487,108 @@ function findPdfAttachment(message) {
   return null;
 }
 
-function extractTextContent(message) {
+/**
+ * Extract both text and HTML content from email message
+ * Returns { text: string|null, html: string|null }
+ */
+function extractEmailContent(message) {
   const parts = message.payload?.parts || [];
+  let text = null;
+  let html = null;
   
-  // Try to find text/plain part
+  // Look for text/plain and text/html parts
   for (const part of parts) {
-    if (part.mimeType === 'text/plain' && part.body?.data) {
-      return Buffer.from(part.body.data, 'base64').toString('utf-8');
+    if (part.mimeType === 'text/plain' && part.body?.data && !text) {
+      text = Buffer.from(part.body.data, 'base64').toString('utf-8');
+    }
+    if (part.mimeType === 'text/html' && part.body?.data && !html) {
+      html = Buffer.from(part.body.data, 'base64').toString('utf-8');
+    }
+    // Check nested parts (multipart/alternative inside multipart/mixed)
+    if (part.parts) {
+      for (const subPart of part.parts) {
+        if (subPart.mimeType === 'text/plain' && subPart.body?.data && !text) {
+          text = Buffer.from(subPart.body.data, 'base64').toString('utf-8');
+        }
+        if (subPart.mimeType === 'text/html' && subPart.body?.data && !html) {
+          html = Buffer.from(subPart.body.data, 'base64').toString('utf-8');
+        }
+      }
     }
   }
   
-  // Try text/html as fallback
-  for (const part of parts) {
-    if (part.mimeType === 'text/html' && part.body?.data) {
-      const html = Buffer.from(part.body.data, 'base64').toString('utf-8');
-      // Basic HTML to text conversion
-      return html
-        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-        .replace(/<[^>]+>/g, '\n')
-        .replace(/&nbsp;/g, ' ')
-        .replace(/&amp;/g, '&')
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .replace(/\n\s*\n/g, '\n\n')
-        .trim();
+  // Try body directly (single-part email)
+  if (!text && !html && message.payload?.body?.data) {
+    const content = Buffer.from(message.payload.body.data, 'base64').toString('utf-8');
+    // Check if it's HTML
+    if (content.trim().startsWith('<') || /<html|<body|<div|<table/i.test(content)) {
+      html = content;
+    } else {
+      text = content;
     }
   }
   
-  // Try body directly
-  if (message.payload?.body?.data) {
-    return Buffer.from(message.payload.body.data, 'base64').toString('utf-8');
+  // Last resort: use snippet
+  if (!text && !html) {
+    text = message.snippet || null;
   }
   
-  return message.snippet || null;
+  return { text, html };
+}
+
+/**
+ * Extract text content only (legacy function, now uses extractEmailContent)
+ */
+function extractTextContent(message) {
+  const { text, html } = extractEmailContent(message);
+  
+  // Prefer plain text
+  if (text) return text;
+  
+  // Convert HTML to text as fallback
+  if (html) return htmlToText(html);
+  
+  return null;
+}
+
+/**
+ * Convert HTML to plain text, properly stripping CSS and scripts
+ */
+function htmlToText(html) {
+  return html
+    // Remove style blocks (handles <style>, <style type="...">, etc.)
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '')
+    // Remove script blocks
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
+    // Remove HTML comments
+    .replace(/<!--[\s\S]*?-->/g, '')
+    // Remove invisible elements
+    .replace(/<(head|title|meta|link)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
+    .replace(/<(head|title|meta|link)\b[^>]*\/?>/gi, '')
+    // Convert common block elements to newlines
+    .replace(/<\/(p|div|tr|li|h[1-6]|br)\s*>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    // Convert table cells to tabs
+    .replace(/<\/td>/gi, '\t')
+    // Remove remaining tags
+    .replace(/<[^>]+>/g, '')
+    // Decode HTML entities
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&euro;/gi, '€')
+    .replace(/&#\d+;/g, (match) => {
+      const code = parseInt(match.slice(2, -1), 10);
+      return String.fromCharCode(code);
+    })
+    // Clean up whitespace
+    .replace(/[ \t]+/g, ' ')  // Collapse horizontal whitespace
+    .replace(/\n\s*\n/g, '\n\n')  // Collapse multiple newlines
+    .replace(/^\s+|\s+$/gm, '')  // Trim each line
+    .trim();
 }
 
 function printDeductibility(deductible, reason, incomeTaxPercent, vatRecoverable) {

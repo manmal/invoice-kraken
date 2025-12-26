@@ -1,14 +1,15 @@
 /**
- * Configuration management for Invoice Kraken
+ * Configuration management for Kraxler
  * Stores user preferences and tax-relevant settings
  */
 
 import fs from 'fs';
 import path from 'path';
 import readline from 'readline';
+import { getConfigDir, getConfigPath } from './paths.js';
 
-const CONFIG_DIR = path.join(process.cwd(), '.invoice-kraken');
-const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
+const CONFIG_DIR = getConfigDir();
+const CONFIG_FILE = getConfigPath();
 
 const DEFAULT_CONFIG = {
   // Tax jurisdiction
@@ -33,6 +34,17 @@ const DEFAULT_CONFIG = {
   
   // Version for future migrations
   config_version: 1,
+  
+  // Model configuration
+  // Preset: 'cheap' | 'balanced' | 'quality' | 'local'
+  model_preset: null,
+  
+  // Per-task model overrides (optional)
+  // models: {
+  //   emailClassification: { provider: 'google', modelId: 'gemini-2.0-flash' },
+  //   browserDownload: { provider: 'anthropic', modelId: 'claude-sonnet-4-5' },
+  // }
+  models: null,
 };
 
 let cachedConfig = null;
@@ -198,7 +210,7 @@ export async function runSetupWizard() {
   
   console.log('\n── Business Use Percentages ─────────────────────────────────────────\n');
   console.log('For mixed-use expenses, what percentage is typically business use?');
-  console.log('(You can change these later with: invoice-kraken config)\n');
+  console.log('(You can change these later with: kraxler config)\n');
   
   const telecomPercent = await askChoice(rl, 'Mobile phone business use:', [
     { label: '50% (default)', value: 50 },
@@ -251,8 +263,8 @@ export async function runSetupWizard() {
   console.log(`║    • Telecom business use: ${telecomPercent}%                                      ║`);
   console.log(`║    • Internet business use: ${internetPercent}%                                     ║`);
   console.log(`║                                                                            ║`);
-  console.log(`║  Config saved to: .invoice-kraken/config.json                              ║`);
-  console.log(`║  Run 'invoice-kraken config' to change settings anytime.                   ║`);
+  console.log(`║  Config saved to: ${CONFIG_FILE.replace(process.env.HOME, '~').substring(0, 50).padEnd(50)}   ║`);
+  console.log(`║  Run 'kraxler config' to change settings anytime.                   ║`);
   console.log(`╚════════════════════════════════════════════════════════════════════════════╝
 `);
   
@@ -343,7 +355,19 @@ export function printConfig() {
   console.log(`║  Telecom business use: ${config.telecom_business_percent}%                                              ║`);
   console.log(`║  Internet business use: ${config.internet_business_percent}%                                             ║`);
   console.log(`║                                                                            ║`);
-  console.log(`║  Config file: .invoice-kraken/config.json                                  ║`);
+  
+  // Model configuration
+  if (config.model_preset) {
+    console.log(`║  Model preset: ${config.model_preset.padEnd(53)}║`);
+  }
+  if (config.models && Object.keys(config.models).length > 0) {
+    console.log(`║  Custom models: ${Object.keys(config.models).join(', ').substring(0, 51).padEnd(51)}║`);
+  }
+  
+  console.log(`║                                                                            ║`);
+  console.log(`║  Config: ${CONFIG_FILE.replace(process.env.HOME, '~').padEnd(60)}  ║`);
   console.log(`╚════════════════════════════════════════════════════════════════════════════╝
+
+Run 'npx kraxler models' to see full AI model configuration.
 `);
 }

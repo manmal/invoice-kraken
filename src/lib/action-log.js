@@ -46,16 +46,16 @@ export function startAction(options) {
   
   const stmt = db.prepare(`
     INSERT INTO action_log (action, account, year, month_from, month_to, started_at, status)
-    VALUES ($action, $account, $year, $monthFrom, $monthTo, $startedAt, 'running')
+    VALUES (@action, @account, @year, @monthFrom, @monthTo, @startedAt, 'running')
   `);
   
   const result = stmt.run({
-    $action: action,
-    $account: account,
-    $year: year,
-    $monthFrom: monthFrom,
-    $monthTo: monthTo,
-    $startedAt: new Date().toISOString(),
+    action,
+    account,
+    year,
+    monthFrom,
+    monthTo,
+    startedAt: new Date().toISOString(),
   });
   
   return result.lastInsertRowid;
@@ -68,32 +68,32 @@ export function updateActionProgress(actionId, progress) {
   const db = getDb();
   
   const updates = [];
-  const params = { $id: actionId };
+  const params = { id: actionId };
   
   if (progress.emailsFound !== undefined) {
-    updates.push('emails_found = $emailsFound');
-    params.$emailsFound = progress.emailsFound;
+    updates.push('emails_found = @emailsFound');
+    params.emailsFound = progress.emailsFound;
   }
   if (progress.emailsProcessed !== undefined) {
-    updates.push('emails_processed = $emailsProcessed');
-    params.$emailsProcessed = progress.emailsProcessed;
+    updates.push('emails_processed = @emailsProcessed');
+    params.emailsProcessed = progress.emailsProcessed;
   }
   if (progress.emailsNew !== undefined) {
-    updates.push('emails_new = $emailsNew');
-    params.$emailsNew = progress.emailsNew;
+    updates.push('emails_new = @emailsNew');
+    params.emailsNew = progress.emailsNew;
   }
   if (progress.emailsSkipped !== undefined) {
-    updates.push('emails_skipped = $emailsSkipped');
-    params.$emailsSkipped = progress.emailsSkipped;
+    updates.push('emails_skipped = @emailsSkipped');
+    params.emailsSkipped = progress.emailsSkipped;
   }
   if (progress.emailsFailed !== undefined) {
-    updates.push('emails_failed = $emailsFailed');
-    params.$emailsFailed = progress.emailsFailed;
+    updates.push('emails_failed = @emailsFailed');
+    params.emailsFailed = progress.emailsFailed;
   }
   
   if (updates.length === 0) return;
   
-  const stmt = db.prepare(`UPDATE action_log SET ${updates.join(', ')} WHERE id = $id`);
+  const stmt = db.prepare(`UPDATE action_log SET ${updates.join(', ')} WHERE id = @id`);
   stmt.run(params);
 }
 
@@ -104,34 +104,34 @@ export function completeAction(actionId, results = {}) {
   const db = getDb();
   
   // Get start time to calculate duration
-  const action = db.prepare('SELECT started_at FROM action_log WHERE id = $id').get({ $id: actionId });
+  const action = db.prepare('SELECT started_at FROM action_log WHERE id = @id').get({ id: actionId });
   const startTime = action ? new Date(action.started_at) : new Date();
   const duration = (Date.now() - startTime.getTime()) / 1000;
   
   const stmt = db.prepare(`
     UPDATE action_log SET 
       status = 'completed',
-      finished_at = $finishedAt,
-      duration_seconds = $duration,
-      emails_found = COALESCE($emailsFound, emails_found),
-      emails_processed = COALESCE($emailsProcessed, emails_processed),
-      emails_new = COALESCE($emailsNew, emails_new),
-      emails_skipped = COALESCE($emailsSkipped, emails_skipped),
-      emails_failed = COALESCE($emailsFailed, emails_failed),
-      notes = $notes
-    WHERE id = $id
+      finished_at = @finishedAt,
+      duration_seconds = @duration,
+      emails_found = COALESCE(@emailsFound, emails_found),
+      emails_processed = COALESCE(@emailsProcessed, emails_processed),
+      emails_new = COALESCE(@emailsNew, emails_new),
+      emails_skipped = COALESCE(@emailsSkipped, emails_skipped),
+      emails_failed = COALESCE(@emailsFailed, emails_failed),
+      notes = @notes
+    WHERE id = @id
   `);
   
   stmt.run({
-    $id: actionId,
-    $finishedAt: new Date().toISOString(),
-    $duration: duration,
-    $emailsFound: results.emailsFound ?? null,
-    $emailsProcessed: results.emailsProcessed ?? null,
-    $emailsNew: results.emailsNew ?? null,
-    $emailsSkipped: results.emailsSkipped ?? null,
-    $emailsFailed: results.emailsFailed ?? null,
-    $notes: results.notes ? JSON.stringify(results.notes) : null,
+    id: actionId,
+    finishedAt: new Date().toISOString(),
+    duration,
+    emailsFound: results.emailsFound ?? null,
+    emailsProcessed: results.emailsProcessed ?? null,
+    emailsNew: results.emailsNew ?? null,
+    emailsSkipped: results.emailsSkipped ?? null,
+    emailsFailed: results.emailsFailed ?? null,
+    notes: results.notes ? JSON.stringify(results.notes) : null,
   });
 }
 
@@ -141,30 +141,30 @@ export function completeAction(actionId, results = {}) {
 export function failAction(actionId, error, partialResults = {}) {
   const db = getDb();
   
-  const action = db.prepare('SELECT started_at FROM action_log WHERE id = $id').get({ $id: actionId });
+  const action = db.prepare('SELECT started_at FROM action_log WHERE id = @id').get({ id: actionId });
   const startTime = action ? new Date(action.started_at) : new Date();
   const duration = (Date.now() - startTime.getTime()) / 1000;
   
   const stmt = db.prepare(`
     UPDATE action_log SET 
       status = 'failed',
-      finished_at = $finishedAt,
-      duration_seconds = $duration,
-      error_message = $errorMessage,
-      emails_found = COALESCE($emailsFound, emails_found),
-      emails_processed = COALESCE($emailsProcessed, emails_processed),
-      emails_new = COALESCE($emailsNew, emails_new)
-    WHERE id = $id
+      finished_at = @finishedAt,
+      duration_seconds = @duration,
+      error_message = @errorMessage,
+      emails_found = COALESCE(@emailsFound, emails_found),
+      emails_processed = COALESCE(@emailsProcessed, emails_processed),
+      emails_new = COALESCE(@emailsNew, emails_new)
+    WHERE id = @id
   `);
   
   stmt.run({
-    $id: actionId,
-    $finishedAt: new Date().toISOString(),
-    $duration: duration,
-    $errorMessage: error?.message || String(error),
-    $emailsFound: partialResults.emailsFound ?? null,
-    $emailsProcessed: partialResults.emailsProcessed ?? null,
-    $emailsNew: partialResults.emailsNew ?? null,
+    id: actionId,
+    finishedAt: new Date().toISOString(),
+    duration,
+    errorMessage: error?.message || String(error),
+    emailsFound: partialResults.emailsFound ?? null,
+    emailsProcessed: partialResults.emailsProcessed ?? null,
+    emailsNew: partialResults.emailsNew ?? null,
   });
 }
 
@@ -178,11 +178,11 @@ export function markInterruptedActions() {
   const stmt = db.prepare(`
     UPDATE action_log SET 
       status = 'interrupted',
-      finished_at = $finishedAt
+      finished_at = @finishedAt
     WHERE status = 'running'
   `);
   
-  const result = stmt.run({ $finishedAt: new Date().toISOString() });
+  const result = stmt.run({ finishedAt: new Date().toISOString() });
   return result.changes;
 }
 
@@ -209,11 +209,11 @@ export function getYearStatus(account, year) {
     // Check if searched
     const searchAction = db.prepare(`
       SELECT * FROM action_log 
-      WHERE account = $account AND year = $year 
-        AND month_from <= $month AND month_to >= $month
+      WHERE account = @account AND year = @year 
+        AND month_from <= @month AND month_to >= @month
         AND action = 'search' AND status = 'completed'
       ORDER BY finished_at DESC LIMIT 1
-    `).get({ $account: account, $year: year, $month: month });
+    `).get({ account, year, month });
     
     if (searchAction) {
       result.searched.push(month);
@@ -225,9 +225,9 @@ export function getYearStatus(account, year) {
     const emailCounts = db.prepare(`
       SELECT status, COUNT(*) as count 
       FROM emails 
-      WHERE account = $account AND year = $year AND month = $month
+      WHERE account = @account AND year = @year AND month = @month
       GROUP BY status
-    `).all({ $account: account, $year: year, $month: month });
+    `).all({ account, year, month });
     
     const counts = Object.fromEntries(emailCounts.map(r => [r.status, r.count]));
     const pending = counts.pending || 0;
@@ -267,12 +267,12 @@ export function getRecentActions(account, limit = 20) {
   
   const stmt = db.prepare(`
     SELECT * FROM action_log 
-    WHERE account = $account
+    WHERE account = @account
     ORDER BY started_at DESC
-    LIMIT $limit
+    LIMIT @limit
   `);
   
-  return stmt.all({ $account: account, $limit: limit });
+  return stmt.all({ account, limit });
 }
 
 /**
@@ -284,11 +284,11 @@ export function getFailedActions(account) {
   
   const stmt = db.prepare(`
     SELECT * FROM action_log 
-    WHERE account = $account AND status IN ('failed', 'interrupted')
+    WHERE account = @account AND status IN ('failed', 'interrupted')
     ORDER BY started_at DESC
   `);
   
-  return stmt.all({ $account: account });
+  return stmt.all({ account });
 }
 
 /**
@@ -300,12 +300,12 @@ export function wasMonthSearched(account, year, month) {
   
   const stmt = db.prepare(`
     SELECT COUNT(*) as count FROM action_log 
-    WHERE account = $account AND year = $year 
-      AND month_from <= $month AND month_to >= $month
+    WHERE account = @account AND year = @year 
+      AND month_from <= @month AND month_to >= @month
       AND action = 'search' AND status = 'completed'
   `);
   
-  const result = stmt.get({ $account: account, $year: year, $month: month });
+  const result = stmt.get({ account, year, month });
   return result.count > 0;
 }
 

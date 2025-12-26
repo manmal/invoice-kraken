@@ -13,7 +13,7 @@ import {
   markInterruptedActions 
 } from '../lib/action-log.js';
 
-export async function searchCommand(options) {
+export async function scanCommand(options) {
   const { account, year, fromMonth = 1, toMonth = 12 } = options;
   const yearNum = parseInt(year, 10);
   
@@ -136,7 +136,7 @@ export async function searchCommand(options) {
   console.log(`  Total emails found: ${totalFound}`);
   console.log(`  New emails added: ${totalNew}`);
   console.log(`  Already in database: ${totalSkipped}`);
-  console.log(`\nRun "bun run investigate -- --account ${account}" to analyze the emails.`);
+  console.log(`\nRun "kraxler extract --account ${account}" to analyze the emails.`);
   
   } catch (error) {
     failAction(actionId, error, {

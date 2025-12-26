@@ -4,19 +4,20 @@
 
 import path from 'path';
 import fs from 'fs';
+import { getInvoicesDir as getInvoicesDirFromPaths, ensureDir as ensureDirFromPaths } from '../lib/paths.js';
 
 /**
  * Get the base invoices directory
  */
 export function getInvoicesDir() {
-  return path.join(process.cwd(), 'invoices');
+  return getInvoicesDirFromPaths();
 }
 
 /**
  * Ensure a directory exists
  */
 export function ensureDir(dirPath) {
-  fs.mkdirSync(dirPath, { recursive: true });
+  return ensureDirFromPaths(dirPath);
 }
 
 /**

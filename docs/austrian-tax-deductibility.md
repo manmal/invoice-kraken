@@ -1,6 +1,6 @@
 # Austrian Tax Deductibility Guide for Einzelunternehmer (Sole Proprietors)
 
-*Reference documentation for Invoice Kraken's deductibility classification system*
+*Reference documentation for Kraxler's deductibility classification system*
 
 Last updated: December 2025
 
@@ -285,7 +285,7 @@ Simplified requirements:
 
 ---
 
-## Implementation Notes for Invoice Kraken
+## Implementation Notes for Kraxler
 
 ### Deductibility Categories
 
