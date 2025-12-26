@@ -83,28 +83,48 @@ For each email, determine:
    - Amount (with currency, e.g., "149.00 €")
    - Invoice date (YYYY-MM-DD format)
    - Vendor/product name for filename (e.g., "1password_family", "anthropic_api", "hetzner_cloud", "apple_icloud", "spusu_mobile")
-4. Tax deductibility for Austrian freelance software developer:
+4. Tax deductibility for Austrian Einzelunternehmer (sole proprietor) freelance software developer:
    
-   CONTEXT: The freelancer has a COMPANY CAR (Firmen-KFZ), so car-related expenses ARE deductible.
+   IMPORTANT AUSTRIAN TAX RULES:
+   - Income Tax (EST) and VAT (Vorsteuer) deductibility are SEPARATE
+   - The freelancer has a COMPANY CAR (Firmen-KFZ)
+   - PKW/Kombi in Austria: NO Vorsteuerabzug (VAT recovery) regardless of business use!
+   - Business meals: 50% income tax, but 100% VAT recovery
    
    Categories:
-   - full: 100% deductible business expenses:
+   - full: 100% income tax + 100% VAT recovery:
      * Software, cloud services, dev tools, hosting, domains
      * Professional services (accountant, legal)
      * Hardware for work (computers, monitors, keyboards)
      * Education (tech courses, books, conferences)
-     * COMPANY CAR expenses: fuel/petrol (Tankstelle), car service/repair, car wash, parking (business), tolls, car insurance, Vignette, ÖAMTC/ARBÖ
-   - partial: Partially deductible with percentage:
-     * Telecom/mobile phone (~50% business use)
-     * Internet (~60% business use)
-     * Home office costs (if applicable)
+   
+   - vehicle: 100% income tax BUT NO VAT recovery (Austrian PKW rule!):
+     * Fuel/petrol (Tankstelle: OMV, BP, Shell, etc.)
+     * Car service/repair, car wash
+     * Tolls (ASFINAG), Vignette
+     * ÖAMTC, ARBÖ membership
+     * Parking (business)
+     * Car insurance
+   
+   - meals: 50% income tax, 100% VAT recovery:
+     * Business meals with clients
+     * Restaurant expenses for business purposes
+   
+   - telecom: Partial (typically 50%) for both EST and VAT:
+     * Mobile phone (A1, Magenta, Drei, spusu, etc.)
+     * Internet (~50-60% business use)
+   
    - none: Not deductible (personal):
      * Entertainment (Netflix, Spotify, streaming)
-     * Groceries, restaurants (unless client entertainment)
-     * Personal subscriptions, gym, etc.
+     * Groceries
+     * Personal restaurants (not business meals)
+     * Cosmetics, personal care
+     * Health supplements
+     * Candy/sweets shops
+   
    - unclear: Needs manual review:
      * Amazon (could be business or personal)
-     * General electronics stores
+     * General electronics stores (MediaMarkt, Saturn)
      * Mixed-use items
 
 Emails to analyze:
@@ -119,9 +139,10 @@ Return ONLY a valid JSON array (no markdown, no explanation) with this structure
   "amount": "string or null (e.g., '149.00 €')",
   "invoice_date": "YYYY-MM-DD or null",
   "vendor_product": "snake_case name for filename (e.g., 'anthropic_api', 'hetzner_cloud')",
-  "deductible": "full"|"partial"|"none"|"unclear",
+  "deductible": "full"|"vehicle"|"meals"|"telecom"|"none"|"unclear",
   "deductible_reason": "brief explanation",
-  "deductible_percent": number or null,
+  "income_tax_percent": number or null (100 for full/vehicle, 50 for meals/telecom, 0 for none),
+  "vat_recoverable": true/false/null (false for vehicle!, true for meals despite 50% EST),
   "confidence": "high"|"medium"|"low",
   "notes": "any relevant notes"
 }]`;

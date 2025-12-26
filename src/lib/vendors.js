@@ -1,10 +1,72 @@
 /**
  * Known vendor database for tax deductibility classification
- * For Austrian freelance software developers
+ * For Austrian Einzelunternehmer (sole proprietors) / freelance software developers
+ * 
+ * IMPORTANT AUSTRIAN TAX RULES:
+ * 1. Income Tax (EST) and VAT (USt) deductibility are SEPARATE
+ * 2. PKW/Kombi: NO Vorsteuerabzug in Austria (special rule!)
+ * 3. Business meals: 50% income tax, 100% VAT
+ * 4. Phone/Internet: Business portion only (typically 50%)
+ * 5. Kleinunternehmer (< €55k revenue): No VAT recovery at all
+ * 
+ * See: docs/austrian-tax-deductibility.md for details
  */
 
+/**
+ * Deductibility types with Austrian tax rules
+ */
+export const DEDUCTIBILITY_TYPES = {
+  // 100% income tax + 100% VAT recovery
+  full: {
+    income_tax_percent: 100,
+    vat_recoverable: true,
+    icon: '💼',
+    label: 'Fully Deductible',
+  },
+  
+  // Vehicle expenses: 100% income tax (business portion) but NO VAT recovery!
+  vehicle: {
+    income_tax_percent: 100, // of business portion
+    vat_recoverable: false,  // PKW = no Vorsteuerabzug in Austria!
+    icon: '🚗',
+    label: 'Vehicle (no VAT)',
+  },
+  
+  // Business meals: 50% income tax, 100% VAT
+  meals: {
+    income_tax_percent: 50,
+    vat_recoverable: true,  // Full VAT recovery despite 50% income tax!
+    icon: '🍽️',
+    label: 'Meals (50% EST)',
+  },
+  
+  // Telecom: Business portion (typically 50%)
+  telecom: {
+    income_tax_percent: 50, // default, can be higher with proof
+    vat_recoverable: true,  // same percentage as income tax
+    icon: '📱',
+    label: 'Telecom (partial)',
+  },
+  
+  // Not deductible (personal expenses)
+  none: {
+    income_tax_percent: 0,
+    vat_recoverable: false,
+    icon: '🚫',
+    label: 'Not Deductible',
+  },
+  
+  // Needs manual review
+  unclear: {
+    income_tax_percent: null,
+    vat_recoverable: null,
+    icon: '❓',
+    label: 'Needs Review',
+  },
+};
+
 export const KNOWN_VENDORS = {
-  // Fully deductible (100%)
+  // Fully deductible (100% income tax + VAT recovery)
   full: [
     // Software & SaaS
     { domain: 'jetbrains.com', name: 'JetBrains', category: 'Software' },
@@ -79,6 +141,8 @@ export const KNOWN_VENDORS = {
     { domain: 'convertkit.com', name: 'ConvertKit', category: 'Email Service' },
     { domain: 'buttondown.email', name: 'Buttondown', category: 'Email Service' },
     { domain: 'resend.com', name: 'Resend', category: 'Email Service' },
+    { domain: 'brevo.com', name: 'Brevo', category: 'Email Service' },
+    { domain: 'sendinblue.com', name: 'Brevo', category: 'Email Service' },
     
     // Communication (Business)
     { domain: 'slack.com', name: 'Slack', category: 'Communication' },
@@ -130,7 +194,6 @@ export const KNOWN_VENDORS = {
     { domain: 'oreilly.com', name: "O'Reilly", category: 'Education' },
     { domain: 'manning.com', name: 'Manning', category: 'Education' },
     { domain: 'packtpub.com', name: 'Packt', category: 'Education' },
-    { domain: 'amazon.com', name: 'Amazon Books', category: 'Education', partial: true },
     
     // Hardware vendors (typically deductible)
     { domain: 'apple.com', name: 'Apple', category: 'Hardware' },
@@ -147,24 +210,41 @@ export const KNOWN_VENDORS = {
     { pattern: /notar/i, name: 'Notary', category: 'Professional' },
     { pattern: /wko\.at/i, name: 'WKO', category: 'Professional' },
     { pattern: /svs\.at/i, name: 'SVS', category: 'Insurance' },
-    
-    // Company Car (Firmen-KFZ) - fully deductible
-    { pattern: /tankstelle|shell|bp|omv|eni|avanti|jet\s|turmöl/i, name: 'Fuel', category: 'Company Car' },
-    { pattern: /avia|esso|aral|total\s/i, name: 'Fuel', category: 'Company Car' },
-    { pattern: /autowäsche|car\s*wash|waschstraße|waschanlage/i, name: 'Car Wash', category: 'Company Car' },
-    { pattern: /werkstatt|autoservice|kfz[-\s]?service|reparatur/i, name: 'Car Service', category: 'Company Car' },
-    { pattern: /reifenwechsel|reifen[-\s]?service|tire/i, name: 'Tires', category: 'Company Car' },
-    { pattern: /öamtc|arbö/i, name: 'Roadside Assistance', category: 'Company Car' },
-    { pattern: /asfinag|vignette|maut|toll/i, name: 'Tolls/Vignette', category: 'Company Car' },
-    { pattern: /parkgarage|parking|parkhaus|kurzparkzone/i, name: 'Parking', category: 'Company Car' },
-    { pattern: /kfz[-\s]?versicherung|autoversicherung/i, name: 'Car Insurance', category: 'Company Car' },
-    { domain: 'asfinag.at', name: 'ASFINAG', category: 'Company Car' },
-    { domain: 'oeamtc.at', name: 'ÖAMTC', category: 'Company Car' },
-    { domain: 'arboe.at', name: 'ARBÖ', category: 'Company Car' },
   ],
   
-  // Partially deductible
-  partial: [
+  // Vehicle expenses: 100% income tax but NO VAT recovery (Austrian special rule!)
+  vehicle: [
+    // Fuel - NO Vorsteuerabzug for PKW in Austria!
+    { pattern: /tankstelle|shell|bp|omv|eni|avanti|jet\s|turmöl/i, name: 'Fuel', category: 'Vehicle Fuel' },
+    { pattern: /avia|esso|aral|total\s/i, name: 'Fuel', category: 'Vehicle Fuel' },
+    
+    // Car services - NO Vorsteuerabzug
+    { pattern: /autowäsche|car\s*wash|waschstraße|waschanlage/i, name: 'Car Wash', category: 'Vehicle Service' },
+    { pattern: /werkstatt|autoservice|kfz[-\s]?service|reparatur/i, name: 'Car Service', category: 'Vehicle Service' },
+    { pattern: /reifenwechsel|reifen[-\s]?service|tire/i, name: 'Tires', category: 'Vehicle Service' },
+    { pattern: /kfz[-\s]?versicherung|autoversicherung/i, name: 'Car Insurance', category: 'Vehicle Insurance' },
+    
+    // Roadside assistance & tolls
+    { domain: 'oeamtc.at', name: 'ÖAMTC', category: 'Vehicle Club' },
+    { domain: 'arboe.at', name: 'ARBÖ', category: 'Vehicle Club' },
+    { pattern: /öamtc|arbö/i, name: 'Roadside Assistance', category: 'Vehicle Club' },
+    { domain: 'asfinag.at', name: 'ASFINAG', category: 'Tolls' },
+    { pattern: /asfinag|vignette|maut|toll/i, name: 'Tolls/Vignette', category: 'Tolls' },
+    
+    // Parking
+    { pattern: /parkgarage|parking|parkhaus|kurzparkzone/i, name: 'Parking', category: 'Vehicle Parking' },
+    { domain: 'parkandride.at', name: 'Park & Ride', category: 'Vehicle Parking' },
+  ],
+  
+  // Business meals: 50% income tax, but 100% VAT recovery!
+  meals: [
+    { pattern: /restaurant|gasthaus|gasthof|wirtshaus|beisl/i, name: 'Restaurant', category: 'Business Meal' },
+    { pattern: /bewirtung|geschäftsessen|business\s*lunch|business\s*dinner/i, name: 'Business Meal', category: 'Business Meal' },
+    { pattern: /catering/i, name: 'Catering', category: 'Business Meal' },
+  ],
+  
+  // Telecom: Typically 50% business use (can be higher with proof)
+  telecom: [
     { domain: 'a1.at', name: 'A1', category: 'Telecom', percent: 50 },
     { domain: 'a1.net', name: 'A1', category: 'Telecom', percent: 50 },
     { domain: 'drei.at', name: 'Drei', category: 'Telecom', percent: 50 },
@@ -174,12 +254,14 @@ export const KNOWN_VENDORS = {
     { domain: 'yesss.at', name: 'yesss!', category: 'Telecom', percent: 50 },
     { domain: 'spusu.at', name: 'spusu', category: 'Telecom', percent: 50 },
     { domain: 'hot.at', name: 'HoT', category: 'Telecom', percent: 50 },
-    { pattern: /internet|breitband|fiber|glasfaser/i, category: 'Internet', percent: 60 },
-    { pattern: /telefon|mobile|handy/i, category: 'Telecom', percent: 50 },
+    { domain: 'fonira.at', name: 'Fonira', category: 'Internet', percent: 50 },
+    { pattern: /internet|breitband|fiber|glasfaser/i, category: 'Internet', percent: 50 },
+    { pattern: /telefon|mobile|handy|mobilfunk/i, category: 'Telecom', percent: 50 },
   ],
   
-  // Not deductible
+  // Not deductible (personal expenses)
   none: [
+    // Entertainment & Streaming
     { domain: 'netflix.com', name: 'Netflix', category: 'Entertainment' },
     { domain: 'spotify.com', name: 'Spotify', category: 'Entertainment' },
     { domain: 'disneyplus.com', name: 'Disney+', category: 'Entertainment' },
@@ -190,12 +272,32 @@ export const KNOWN_VENDORS = {
     { domain: 'crunchyroll.com', name: 'Crunchyroll', category: 'Entertainment' },
     { domain: 'audible.com', name: 'Audible', category: 'Entertainment' },
     { domain: 'audible.de', name: 'Audible', category: 'Entertainment' },
+    
+    // Groceries
     { pattern: /supermarkt|billa|spar|hofer|lidl|penny|interspar|merkur|eurospar/i, category: 'Groceries' },
-    { pattern: /restaurant|pizz|burger|kebab|sushi|cafe|coffee/i, category: 'Food' },
-    { pattern: /fitinn|mcfit|fitnessstudio|gym/i, category: 'Fitness' },
+    
+    // Fitness
+    { pattern: /fitinn|mcfit|fitnessstudio|gym|fitness/i, category: 'Fitness' },
+    
+    // Entertainment venues
     { pattern: /kino|cinema|cineplexx/i, category: 'Entertainment' },
+    
+    // Dating
     { domain: 'tinder.com', name: 'Tinder', category: 'Personal' },
     { domain: 'bumble.com', name: 'Bumble', category: 'Personal' },
+    
+    // Cosmetics / Personal care
+    { domain: 'flaconi.at', name: 'Flaconi', category: 'Cosmetics' },
+    { domain: 'flaconi.de', name: 'Flaconi', category: 'Cosmetics' },
+    { domain: 'douglas.at', name: 'Douglas', category: 'Cosmetics' },
+    { pattern: /parfum|cosmetic|kosmetik|drogerie/i, category: 'Personal Care' },
+    
+    // Food / Candy shops
+    { domain: 'zuckerlwerkstatt.at', name: 'Zuckerlwerkstatt', category: 'Food/Candy' },
+    { pattern: /zuckerlwerkstatt|süßwaren|confiserie|konditorei/i, category: 'Food/Candy' },
+    
+    // Health supplements (personal)
+    { pattern: /vitamin|supplement|nahrungsergänzung|health\s*dispensary/i, category: 'Health/Supplements' },
   ],
   
   // Unclear - needs review
@@ -214,42 +316,95 @@ export const KNOWN_VENDORS = {
 
 /**
  * Classify deductibility based on sender domain and subject
+ * Returns detailed Austrian tax classification
  */
 export function classifyDeductibility(senderDomain, subject = '', body = '') {
   const textToCheck = `${senderDomain} ${subject} ${body}`.toLowerCase();
   
-  // Check full deductibility first (most common for dev expenses)
-  for (const vendor of KNOWN_VENDORS.full) {
+  // Check vehicle expenses first (special Austrian rules - NO VAT!)
+  for (const vendor of KNOWN_VENDORS.vehicle) {
     if (vendor.domain && senderDomain?.includes(vendor.domain)) {
       return {
-        deductible: 'full',
-        reason: `${vendor.name} - ${vendor.category}`,
-        percent: 100,
+        deductible: 'vehicle',
+        type: DEDUCTIBILITY_TYPES.vehicle,
+        reason: `${vendor.name} - ${vendor.category} (PKW: no VAT recovery in Austria)`,
+        income_tax_percent: 100,
+        vat_recoverable: false,
       };
     }
     if (vendor.pattern && vendor.pattern.test(textToCheck)) {
       return {
-        deductible: 'full',
-        reason: `${vendor.name || vendor.category}`,
-        percent: 100,
+        deductible: 'vehicle',
+        type: DEDUCTIBILITY_TYPES.vehicle,
+        reason: `${vendor.name || vendor.category} (PKW: no VAT recovery in Austria)`,
+        income_tax_percent: 100,
+        vat_recoverable: false,
       };
     }
   }
   
-  // Check partial deductibility
-  for (const vendor of KNOWN_VENDORS.partial) {
+  // Check business meals (50% income tax, 100% VAT)
+  for (const vendor of KNOWN_VENDORS.meals) {
     if (vendor.domain && senderDomain?.includes(vendor.domain)) {
       return {
-        deductible: 'partial',
-        reason: `${vendor.name} - ${vendor.category} (business use)`,
-        percent: vendor.percent || 50,
+        deductible: 'meals',
+        type: DEDUCTIBILITY_TYPES.meals,
+        reason: `${vendor.name} - ${vendor.category} (50% EST, 100% VAT)`,
+        income_tax_percent: 50,
+        vat_recoverable: true,
       };
     }
     if (vendor.pattern && vendor.pattern.test(textToCheck)) {
       return {
-        deductible: 'partial',
-        reason: `${vendor.category} (business use)`,
-        percent: vendor.percent || 50,
+        deductible: 'meals',
+        type: DEDUCTIBILITY_TYPES.meals,
+        reason: `${vendor.name || vendor.category} (50% EST, 100% VAT)`,
+        income_tax_percent: 50,
+        vat_recoverable: true,
+      };
+    }
+  }
+  
+  // Check full deductibility (100% income tax + VAT)
+  for (const vendor of KNOWN_VENDORS.full) {
+    if (vendor.domain && senderDomain?.includes(vendor.domain)) {
+      return {
+        deductible: 'full',
+        type: DEDUCTIBILITY_TYPES.full,
+        reason: `${vendor.name} - ${vendor.category}`,
+        income_tax_percent: 100,
+        vat_recoverable: true,
+      };
+    }
+    if (vendor.pattern && vendor.pattern.test(textToCheck)) {
+      return {
+        deductible: 'full',
+        type: DEDUCTIBILITY_TYPES.full,
+        reason: `${vendor.name || vendor.category}`,
+        income_tax_percent: 100,
+        vat_recoverable: true,
+      };
+    }
+  }
+  
+  // Check telecom (partial - typically 50%)
+  for (const vendor of KNOWN_VENDORS.telecom) {
+    if (vendor.domain && senderDomain?.includes(vendor.domain)) {
+      return {
+        deductible: 'telecom',
+        type: DEDUCTIBILITY_TYPES.telecom,
+        reason: `${vendor.name} - ${vendor.category} (${vendor.percent || 50}% business use)`,
+        income_tax_percent: vendor.percent || 50,
+        vat_recoverable: true,
+      };
+    }
+    if (vendor.pattern && vendor.pattern.test(textToCheck)) {
+      return {
+        deductible: 'telecom',
+        type: DEDUCTIBILITY_TYPES.telecom,
+        reason: `${vendor.category} (${vendor.percent || 50}% business use)`,
+        income_tax_percent: vendor.percent || 50,
+        vat_recoverable: true,
       };
     }
   }
@@ -259,15 +414,19 @@ export function classifyDeductibility(senderDomain, subject = '', body = '') {
     if (vendor.domain && senderDomain?.includes(vendor.domain)) {
       return {
         deductible: 'none',
-        reason: `${vendor.name} - ${vendor.category} (personal)`,
-        percent: 0,
+        type: DEDUCTIBILITY_TYPES.none,
+        reason: `${vendor.name} - ${vendor.category} (personal expense)`,
+        income_tax_percent: 0,
+        vat_recoverable: false,
       };
     }
     if (vendor.pattern && vendor.pattern.test(textToCheck)) {
       return {
         deductible: 'none',
-        reason: `${vendor.category} (personal)`,
-        percent: 0,
+        type: DEDUCTIBILITY_TYPES.none,
+        reason: `${vendor.category} (personal expense)`,
+        income_tax_percent: 0,
+        vat_recoverable: false,
       };
     }
   }
@@ -277,15 +436,19 @@ export function classifyDeductibility(senderDomain, subject = '', body = '') {
     if (vendor.domain && senderDomain?.includes(vendor.domain)) {
       return {
         deductible: 'unclear',
+        type: DEDUCTIBILITY_TYPES.unclear,
         reason: `${vendor.name} - ${vendor.category} (needs review)`,
-        percent: null,
+        income_tax_percent: null,
+        vat_recoverable: null,
       };
     }
     if (vendor.pattern && vendor.pattern.test(textToCheck)) {
       return {
         deductible: 'unclear',
+        type: DEDUCTIBILITY_TYPES.unclear,
         reason: `${vendor.category} (needs review)`,
-        percent: null,
+        income_tax_percent: null,
+        vat_recoverable: null,
       };
     }
   }
@@ -293,7 +456,23 @@ export function classifyDeductibility(senderDomain, subject = '', body = '') {
   // Default to unclear if no match
   return {
     deductible: 'unclear',
+    type: DEDUCTIBILITY_TYPES.unclear,
     reason: 'Unknown vendor - needs manual review',
-    percent: null,
+    income_tax_percent: null,
+    vat_recoverable: null,
   };
+}
+
+/**
+ * Get deductibility icon for display
+ */
+export function getDeductibilityIcon(deductible) {
+  return DEDUCTIBILITY_TYPES[deductible]?.icon || '❓';
+}
+
+/**
+ * Get deductibility label for display
+ */
+export function getDeductibilityLabel(deductible) {
+  return DEDUCTIBILITY_TYPES[deductible]?.label || 'Unknown';
 }

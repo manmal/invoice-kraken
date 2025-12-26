@@ -59,6 +59,27 @@ function initSchema() {
     CREATE INDEX IF NOT EXISTS idx_emails_deductible ON emails(deductible);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_emails_unique ON emails(id, account);
   `);
+  
+  // Migration: Add new columns for Austrian tax rules (v2)
+  try {
+    db.exec(`ALTER TABLE emails ADD COLUMN income_tax_percent INTEGER`);
+  } catch (e) { /* column may already exist */ }
+  
+  try {
+    db.exec(`ALTER TABLE emails ADD COLUMN vat_recoverable INTEGER`); // 0 = false, 1 = true
+  } catch (e) { /* column may already exist */ }
+  
+  try {
+    db.exec(`ALTER TABLE emails ADD COLUMN file_hash TEXT`);
+  } catch (e) { /* column may already exist */ }
+  
+  try {
+    db.exec(`ALTER TABLE emails ADD COLUMN file_verified_at TEXT`);
+  } catch (e) { /* column may already exist */ }
+  
+  try {
+    db.exec(`ALTER TABLE emails ADD COLUMN prefilter_reason TEXT`);
+  } catch (e) { /* column may already exist */ }
 }
 
 export function insertEmail(email) {

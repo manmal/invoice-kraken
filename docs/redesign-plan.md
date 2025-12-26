@@ -9,6 +9,88 @@ Consolidate the current 6 commands (`search`, `investigate`, `download`, `list`,
 
 ---
 
+## Shared Architecture
+
+Both commands share a silent analysis phase via `gatherContext()`:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    src/lib/context.js                           │
+│                                                                 │
+│  gatherContext(account, year, options)                          │
+│    → searchRanges, gaps, emailsByStatus, files, deductibility   │
+└─────────────────────────────────────────────────────────────────┘
+                    ▲                       ▲
+                    │                       │
+         ┌─────────┴─────────┐   ┌─────────┴─────────┐
+         │   run command     │   │  report command   │
+         │                   │   │                   │
+         │ 1. gatherContext  │   │ 1. gatherContext  │
+         │ 2. print state    │   │ 2. format as      │
+         │ 3. execute stages │   │    markdown/html  │
+         │ 4. print results  │   │ 3. write file     │
+         └───────────────────┘   └───────────────────┘
+```
+
+### Context Object Structure
+
+```javascript
+{
+  // Stage 1: Search
+  search: {
+    ranges: [{ start: '2025-01-01', end: '2025-10-31', count: 423 }, ...],
+    gaps: [{ start: '2025-11-15', end: '2025-11-30' }],
+    totalEmails: 536,
+  },
+  
+  // Stage 2: Analysis
+  analysis: {
+    pending: 28,
+    analyzed: 508,
+    prefiltered: 39,
+    prefilteredItems: [{ id, date, sender, subject, reason }, ...],
+    byStatus: { downloaded: 195, no_invoice: 280, manual: 13, ... },
+  },
+  
+  // Stage 3: Downloads
+  downloads: {
+    completed: 195,
+    pendingDownload: 2,
+    manual: 13,
+    manualItems: [{ id, date, vendor, reason }, ...],
+  },
+  
+  // Stage 4: Files
+  files: {
+    onDisk: 195,
+    verified: 195,        // hash matches
+    hashMismatch: [],     // file changed since download
+    orphaned: [],         // files not in DB
+    missing: [],          // DB says downloaded but file gone
+  },
+  
+  // Summary
+  deductibility: {
+    full: { count: 89, cents: 452300 },
+    partial: { count: 12, cents: 120000 },
+    unclear: { count: 8, cents: 89000 },
+    none: { count: 45, cents: 210000 },
+  },
+  
+  // All issues in one place
+  issues: [
+    { type: 'search_gap', ranges: [...] },
+    { type: 'pending_analysis', count: 28 },
+    { type: 'manual_download', items: [...] },
+    { type: 'needs_review', items: [...] },
+    { type: 'missing_file', items: [...] },
+    { type: 'hash_mismatch', items: [...] },
+  ],
+}
+```
+
+---
+
 ## Command: `run`
 
 ### Purpose
@@ -282,9 +364,10 @@ buchungsbeleg, bestellbestätigung, zahlungsbestätigung
 
 ### Phase 1: Core Refactoring
 
-#### 1.1 New Database Schema Additions
+#### 1.1 Database Schema Changes
+
+**New table for day-level search tracking:**
 ```sql
--- Track date ranges more granularly
 CREATE TABLE IF NOT EXISTS search_ranges (
   id INTEGER PRIMARY KEY,
   account TEXT NOT NULL,
@@ -293,12 +376,31 @@ CREATE TABLE IF NOT EXISTS search_ranges (
   end_date TEXT NOT NULL,    -- YYYY-MM-DD
   emails_found INTEGER,
   searched_at TEXT,
-  UNIQUE(account, year, start_date, end_date)
+  UNIQUE(account, start_date, end_date)
 );
+```
 
--- Track file verification
+**New columns on emails table:**
+```sql
+-- File verification with hash
 ALTER TABLE emails ADD COLUMN file_verified_at TEXT;
 ALTER TABLE emails ADD COLUMN file_hash TEXT;
+
+-- Prefilter tracking (reason why skipped)
+ALTER TABLE emails ADD COLUMN prefilter_reason TEXT;
+```
+
+**New status value:**
+- Add `'prefiltered'` as valid status (stored in DB, not silently skipped)
+
+**Updated status flow:**
+```
+pending → prefiltered (auto-skip, stored with reason)
+        → no_invoice (AI says not invoice)
+        → pending_download (AI found invoice, needs download)
+        → downloaded (PDF saved, hash computed)
+        → manual (download failed, needs human)
+        → duplicate (matches existing invoice)
 ```
 
 #### 1.2 New Library: Context Gatherer
@@ -306,31 +408,113 @@ ALTER TABLE emails ADD COLUMN file_hash TEXT;
 
 ```javascript
 /**
- * Gather current state across all stages
+ * Gather current state across all stages (silent analysis)
+ * Used by both `run` and `report` commands
  */
 export async function gatherContext(account, year) {
+  // Stage 1: Search coverage (day-level precision)
+  const searchRanges = getSearchedDateRanges(account, year);
+  const searchGaps = findSearchGaps(account, year, searchRanges);
+  
+  // Stage 2: Analysis status
+  const emailsByStatus = getEmailStatusCounts(account, year);
+  const pendingEmails = getPendingEmails(account, year);
+  const prefilteredEmails = getPrefilteredEmails(account, year);
+  
+  // Stage 3: Download status
+  const downloadedEmails = getDownloadedEmails(account, year);
+  const manualItems = getManualItems(account, year);
+  
+  // Stage 4: File verification (with hash check)
+  const fileVerification = await verifyFiles(account, year, downloadedEmails);
+  
+  // Deductibility summary
+  const deductibility = getDeductibilitySummary(account, year);
+  
+  // Collect all issues
+  const issues = collectIssues({
+    searchGaps,
+    pendingEmails,
+    manualItems,
+    fileVerification,
+    emailsByStatus,
+  });
+  
   return {
-    // Stage 1: Search coverage
-    searchRanges: getSearchedDateRanges(account, year),
-    searchGaps: findSearchGaps(account, year),
-    
-    // Stage 2: Analysis status
-    emailsByStatus: getEmailStatusCounts(account, year),
-    pendingEmails: getPendingEmails(account, year),
-    
-    // Stage 3: Download status
-    downloadedCount: getDownloadedCount(account, year),
-    pendingDownloads: getPendingDownloads(account, year),
-    manualRequired: getManualItems(account, year),
-    
-    // Stage 4: File verification
-    filesOnDisk: scanInvoiceFiles(year),
-    orphanedFiles: findOrphanedFiles(account, year),
-    missingFiles: findMissingFiles(account, year),
-    
-    // Deductibility
-    deductibilitySummary: getDeductibilitySummary(account, year),
+    search: {
+      ranges: mergeContiguousRanges(searchRanges),
+      gaps: searchGaps,
+      totalEmails: emailsByStatus.total,
+    },
+    analysis: {
+      pending: pendingEmails.length,
+      analyzed: emailsByStatus.total - pendingEmails.length,
+      prefiltered: prefilteredEmails.length,
+      prefilteredItems: prefilteredEmails,
+      byStatus: emailsByStatus,
+    },
+    downloads: {
+      completed: downloadedEmails.length,
+      manual: manualItems.length,
+      manualItems,
+    },
+    files: {
+      onDisk: fileVerification.found,
+      verified: fileVerification.hashMatch,
+      hashMismatch: fileVerification.hashMismatch,
+      orphaned: fileVerification.orphaned,
+      missing: fileVerification.missing,
+    },
+    deductibility,
+    issues,
   };
+}
+
+/**
+ * Verify downloaded files exist and hashes match
+ */
+async function verifyFiles(account, year, downloadedEmails) {
+  const invoicesDir = `invoices/${year}`;
+  const filesOnDisk = await scanDirectory(invoicesDir);
+  
+  const result = {
+    found: 0,
+    hashMatch: 0,
+    hashMismatch: [],
+    missing: [],
+    orphaned: [],
+  };
+  
+  // Check each downloaded email
+  for (const email of downloadedEmails) {
+    if (!email.invoice_path) continue;
+    
+    const filePath = email.invoice_path;
+    const fileExists = filesOnDisk.has(filePath);
+    
+    if (!fileExists) {
+      result.missing.push(email);
+      continue;
+    }
+    
+    result.found++;
+    filesOnDisk.delete(filePath);  // Mark as accounted for
+    
+    // Verify hash if stored
+    if (email.file_hash) {
+      const currentHash = await computeFileHash(filePath);
+      if (currentHash === email.file_hash) {
+        result.hashMatch++;
+      } else {
+        result.hashMismatch.push({ email, expectedHash: email.file_hash, actualHash: currentHash });
+      }
+    }
+  }
+  
+  // Remaining files on disk are orphaned
+  result.orphaned = Array.from(filesOnDisk);
+  
+  return result;
 }
 ```
 
@@ -458,24 +642,18 @@ function isContiguous(date1, date2) {
 
 ```
 src/
-├── index.js                    # CLI entry point
+├── index.js                    # CLI entry point (2 commands: run, report)
 ├── commands/
 │   ├── run.js                  # Main pipeline command
-│   ├── report.js               # Report generation
-│   └── legacy/                 # Deprecated commands
-│       ├── search.js
-│       ├── investigate.js
-│       ├── download.js
-│       ├── list.js
-│       ├── status.js
-│       └── log.js
+│   └── report.js               # Report generation
 ├── lib/
-│   ├── db.js                   # Database helpers
+│   ├── db.js                   # Database helpers (updated schema)
 │   ├── gog.js                  # Gmail API wrapper
 │   ├── pi.js                   # AI analysis
-│   ├── prefilter.js            # Skip non-invoices
-│   ├── context.js              # State gathering (NEW)
-│   ├── pipeline.js             # Pipeline runner (NEW)
+│   ├── prefilter.js            # Prefilter logic (now saves to DB)
+│   ├── context.js              # Shared state gathering (NEW)
+│   ├── pipeline.js             # Pipeline stage runner (NEW)
+│   ├── files.js                # File ops + hashing (NEW)
 │   ├── action-log.js           # Action tracking
 │   ├── vendors.js              # Known vendors
 │   └── extract.js              # Invoice extraction
@@ -485,8 +663,16 @@ src/
 │   └── html.js                 # HTML report (NEW)
 └── utils/
     ├── paths.js                # File path helpers
-    └── dates.js                # Date utilities (NEW)
+    └── dates.js                # Date range utilities (NEW)
 ```
+
+### Removed (old commands moved to git history)
+- `src/commands/search.js`
+- `src/commands/investigate.js`
+- `src/commands/download.js`
+- `src/commands/list.js`
+- `src/commands/status.js`
+- `src/commands/log.js`
 
 ---
 

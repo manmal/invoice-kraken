@@ -65,13 +65,23 @@ export async function listCommand(options) {
   // Deductibility breakdown for manual items
   const deductCounts = {
     full: items.filter(i => i.deductible === 'full').length,
-    partial: items.filter(i => i.deductible === 'partial').length,
+    vehicle: items.filter(i => i.deductible === 'vehicle').length,
+    meals: items.filter(i => i.deductible === 'meals').length,
+    telecom: items.filter(i => i.deductible === 'telecom').length,
     none: items.filter(i => i.deductible === 'none').length,
     unclear: items.filter(i => i.deductible === 'unclear' || !i.deductible).length,
   };
   
-  if (deductCounts.full + deductCounts.partial + deductCounts.unclear > 0) {
-    console.log(`\nDeductibility: 💼 ${deductCounts.full} full, 📊 ${deductCounts.partial} partial, ❓ ${deductCounts.unclear} unclear, 🚫 ${deductCounts.none} none`);
+  const parts = [];
+  if (deductCounts.full > 0) parts.push(`💼 ${deductCounts.full} full`);
+  if (deductCounts.vehicle > 0) parts.push(`🚗 ${deductCounts.vehicle} vehicle`);
+  if (deductCounts.meals > 0) parts.push(`🍽️ ${deductCounts.meals} meals`);
+  if (deductCounts.telecom > 0) parts.push(`📱 ${deductCounts.telecom} telecom`);
+  if (deductCounts.unclear > 0) parts.push(`❓ ${deductCounts.unclear} unclear`);
+  if (deductCounts.none > 0) parts.push(`🚫 ${deductCounts.none} none`);
+  
+  if (parts.length > 0) {
+    console.log(`\nDeductibility: ${parts.join(', ')}`);
   }
 }
 

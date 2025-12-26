@@ -130,8 +130,10 @@ async function processEmail(email, analysis, account, options, stats) {
     // Get deductibility (from AI or fallback to vendor DB)
     let deductible = analysis.deductible;
     let deductibleReason = analysis.deductible_reason;
-    let deductiblePercent = analysis.deductible_percent;
+    let incomeTaxPercent = analysis.income_tax_percent;
+    let vatRecoverable = analysis.vat_recoverable;
     
+    // Fallback to vendor DB if AI didn't provide clear classification
     if (!deductible || deductible === 'unclear') {
       const vendorClassification = classifyDeductibility(
         email.sender_domain,
@@ -140,7 +142,13 @@ async function processEmail(email, analysis, account, options, stats) {
       );
       deductible = vendorClassification.deductible;
       deductibleReason = vendorClassification.reason;
-      deductiblePercent = vendorClassification.percent;
+      incomeTaxPercent = vendorClassification.income_tax_percent;
+      vatRecoverable = vendorClassification.vat_recoverable;
+    }
+    
+    // Legacy support: convert deductible_percent to new fields if needed
+    if (incomeTaxPercent === undefined && analysis.deductible_percent !== undefined) {
+      incomeTaxPercent = analysis.deductible_percent;
     }
     
     // Parse amount
@@ -169,43 +177,42 @@ async function processEmail(email, analysis, account, options, stats) {
     // Process based on invoice type
     const invoiceType = analysis.invoice_type || 'unknown';
     
+    // Common extra data for all handlers
+    const extraData = {
+      deductible,
+      deductible_reason: deductibleReason,
+      income_tax_percent: incomeTaxPercent,
+      vat_recoverable: vatRecoverable ? 1 : 0,
+      invoice_amount_cents: amountCents,
+    };
+    
     if (invoiceType === 'pdf_attachment') {
-      await handlePdfAttachment(email, analysis, account, stats, {
-        deductible, deductible_reason: deductibleReason, deductible_percent: deductiblePercent, invoice_amount_cents: amountCents
-      });
+      await handlePdfAttachment(email, analysis, account, stats, extraData);
     } else if (invoiceType === 'text') {
-      await handleTextInvoice(email, analysis, account, stats, {
-        deductible, deductible_reason: deductibleReason, deductible_percent: deductiblePercent, invoice_amount_cents: amountCents
-      });
+      await handleTextInvoice(email, analysis, account, stats, extraData);
     } else if (invoiceType === 'link') {
       updateEmailStatus(email.id, account, 'pending_download', {
         invoice_type: 'link',
         invoice_number: analysis.invoice_number,
         invoice_amount: analysis.amount,
-        invoice_amount_cents: amountCents,
         invoice_date: analysis.invoice_date,
-        deductible,
-        deductible_reason: deductibleReason,
-        deductible_percent: deductiblePercent,
         notes: analysis.notes || 'Has download link',
+        ...extraData,
       });
       console.log(`  ⏳ ${truncate(email.subject, 50)} - Has link, pending download`);
-      printDeductibility(deductible, deductibleReason, deductiblePercent);
+      printDeductibility(deductible, deductibleReason, incomeTaxPercent, vatRecoverable);
       stats.pendingDownload++;
     } else {
       updateEmailStatus(email.id, account, 'manual', {
         invoice_type: invoiceType,
         invoice_number: analysis.invoice_number,
         invoice_amount: analysis.amount,
-        invoice_amount_cents: amountCents,
         invoice_date: analysis.invoice_date,
-        deductible,
-        deductible_reason: deductibleReason,
-        deductible_percent: deductiblePercent,
         notes: analysis.notes || 'Unknown invoice type',
+        ...extraData,
       });
       console.log(`  ⚠ ${truncate(email.subject, 50)} - Needs manual review`);
-      printDeductibility(deductible, deductibleReason, deductiblePercent);
+      printDeductibility(deductible, deductibleReason, incomeTaxPercent, vatRecoverable);
       stats.manual++;
     }
   } catch (error) {
@@ -218,7 +225,7 @@ async function processEmail(email, analysis, account, options, stats) {
 }
 
 async function handlePdfAttachment(email, analysis, account, stats, extra) {
-  const { deductible, deductible_reason, deductible_percent, invoice_amount_cents } = extra;
+  const { deductible, deductible_reason, income_tax_percent, vat_recoverable, invoice_amount_cents } = extra;
   
   // Get full message to find attachment
   const fullMessage = await getMessage(account, email.id);
@@ -284,20 +291,22 @@ async function handlePdfAttachment(email, analysis, account, stats, extra) {
     invoice_amount_cents: invoice_amount_cents,
     invoice_date: analysis.invoice_date,
     attachment_hash: fileHash,
+    file_hash: fileHash,
     deductible,
     deductible_reason,
-    deductible_percent,
+    income_tax_percent,
+    vat_recoverable,
   });
   
   const relativePath = path.relative(process.cwd(), outputPath);
   console.log(`  ✓ ${truncate(email.subject, 50)}`);
   console.log(`    → ${relativePath}`);
-  printDeductibility(deductible, deductible_reason, deductible_percent);
+  printDeductibility(deductible, deductible_reason, income_tax_percent, vat_recoverable);
   stats.downloaded++;
 }
 
 async function handleTextInvoice(email, analysis, account, stats, extra) {
-  const { deductible, deductible_reason, deductible_percent, invoice_amount_cents } = extra;
+  const { deductible, deductible_reason, income_tax_percent, vat_recoverable, invoice_amount_cents } = extra;
   
   // Get full message
   const fullMessage = await getMessage(account, email.id);
@@ -356,15 +365,17 @@ async function handleTextInvoice(email, analysis, account, stats, extra) {
     invoice_amount_cents,
     invoice_date: analysis.invoice_date,
     attachment_hash: fileHash,
+    file_hash: fileHash,
     deductible,
     deductible_reason,
-    deductible_percent,
+    income_tax_percent,
+    vat_recoverable,
   });
   
   const relativePath = path.relative(process.cwd(), outputPath);
   console.log(`  ✓ ${truncate(email.subject, 50)}`);
   console.log(`    → ${relativePath}`);
-  printDeductibility(deductible, deductible_reason, deductible_percent);
+  printDeductibility(deductible, deductible_reason, income_tax_percent, vat_recoverable);
   stats.downloaded++;
 }
 
@@ -470,20 +481,33 @@ function extractTextContent(message) {
   return message.snippet || null;
 }
 
-function printDeductibility(deductible, reason, percent) {
+function printDeductibility(deductible, reason, incomeTaxPercent, vatRecoverable) {
   const icons = {
     full: '💼',
+    vehicle: '🚗',
+    meals: '🍽️',
+    telecom: '📱',
     partial: '📊',
     none: '🚫',
     unclear: '❓',
   };
   const icon = icons[deductible] || '❓';
   
-  if (deductible === 'partial' && percent) {
-    console.log(`    ${icon} ${capitalize(deductible)} (${percent}%): ${reason}`);
-  } else {
-    console.log(`    ${icon} ${capitalize(deductible)}: ${reason}`);
+  let details = capitalize(deductible);
+  
+  // Show income tax percentage if not 100%
+  if (incomeTaxPercent !== null && incomeTaxPercent !== 100) {
+    details += ` (${incomeTaxPercent}% EST)`;
   }
+  
+  // Show VAT recovery status for special cases
+  if (deductible === 'vehicle') {
+    details += ' (no VAT)';
+  } else if (deductible === 'meals' && vatRecoverable) {
+    details += ' (100% VAT)';
+  }
+  
+  console.log(`    ${icon} ${details}: ${reason}`);
 }
 
 function truncate(str, len) {
