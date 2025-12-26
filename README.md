@@ -107,14 +107,14 @@ Downloaded invoices are organized in the `invoices/` directory:
 
 ```
 invoices/
-├── 2024/
+├── 2026/
 │   ├── 01/
-│   │   ├── 15-jetbrains-inv-2024-001.pdf
+│   │   ├── 15-jetbrains-inv-2026-001.pdf
 │   │   └── 22-hetzner-12345.pdf
 │   ├── 02/
 │   │   └── 03-github.pdf
 │   └── ...
-└── 2023/
+└── 2025/
     └── ...
 ```
 
