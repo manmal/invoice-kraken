@@ -7,13 +7,19 @@ import {
   listPresets, 
   getAvailableModels,
   getModelOverrides,
+  AvailableModel,
 } from '../lib/models.js';
 import { loadConfig } from '../lib/config.js';
 import { checkAuth } from '../lib/ai.js';
 
-export async function modelsCommand(options) {
+export interface ModelsCommandOptions {
+  available?: boolean;
+  presets?: boolean;
+}
+
+export async function modelsCommand(options: ModelsCommandOptions): Promise<void> {
   // Always check auth and show status
-  const authError = await checkAuth();
+  const authError: string | null = await checkAuth();
   
   if (authError) {
     console.error(authError);
@@ -27,10 +33,10 @@ export async function modelsCommand(options) {
   // Show available models if requested
   if (options.available) {
     console.log('Available models:\n');
-    const available = await getAvailableModels();
+    const available: AvailableModel[] = await getAvailableModels();
     
     // Group by provider
-    const byProvider = {};
+    const byProvider: Record<string, AvailableModel[]> = {};
     for (const m of available) {
       if (!byProvider[m.provider]) byProvider[m.provider] = [];
       byProvider[m.provider].push(m);

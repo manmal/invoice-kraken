@@ -5,11 +5,37 @@
  * Based on the browser skill from pi-mono.
  */
 
-import puppeteer from 'puppeteer-core';
-import { execSync, spawn } from 'child_process';
-import fs from 'fs';
-import path from 'path';
-import os from 'os';
+import puppeteer, { Browser, Page, CDPSession } from 'puppeteer-core';
+import * as child_process from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
+import { DownloadResult } from '../types.js';
+
+interface StartBrowserOptions {
+  port?: number;
+  profileDir?: string;
+  headless?: boolean;
+  copyProfile?: boolean;
+}
+
+interface NavigateOptions {
+  waitUntil?: 'load' | 'domcontentloaded' | 'networkidle0' | 'networkidle2';
+  timeout?: number;
+}
+
+interface WaitForDownloadOptions {
+  timeout?: number;
+  expectedExtension?: string;
+}
+
+interface DownloadInvoiceOptions {
+  timeout?: number;
+}
+
+interface InteractiveDownloadOptions {
+  timeout?: number;
+}
 
 const DEFAULT_PORT = 9222;
 const DEFAULT_PROFILE_DIR = path.join(os.homedir(), '.cache', 'kraxler-browser');
@@ -21,13 +47,13 @@ const DEFAULT_CHROME_PATHS = [
   'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe', // Windows x86
 ];
 
-let browserInstance = null;
-let chromeProcess = null;
+let browserInstance: Browser | null = null;
+let chromeProcess: child_process.ChildProcess | null = null;
 
 /**
  * Find Chrome binary path
  */
-function findChrome() {
+function findChrome(): string {
   for (const chromePath of DEFAULT_CHROME_PATHS) {
     if (fs.existsSync(chromePath)) {
       return chromePath;
@@ -39,7 +65,7 @@ function findChrome() {
 /**
  * Start Chrome with remote debugging enabled
  */
-export async function startBrowser(options = {}) {
+export async function startBrowser(options: StartBrowserOptions = {}): Promise<Browser> {
   const {
     port = DEFAULT_PORT,
     profileDir = DEFAULT_PROFILE_DIR,
@@ -74,7 +100,7 @@ export async function startBrowser(options = {}) {
     const source = path.join(os.homedir(), 'Library', 'Application Support', 'Google', 'Chrome');
     if (fs.existsSync(source)) {
       try {
-        execSync(`rsync -a --delete "${source}/" "${profileDir}/"`, { stdio: 'ignore' });
+        child_process.execSync(`rsync -a --delete "${source}/" "${profileDir}/"`, { stdio: 'ignore' });
       } catch {
         // Ignore rsync errors
       }
@@ -94,7 +120,7 @@ export async function startBrowser(options = {}) {
     args.push('--headless=new');
   }
 
-  chromeProcess = spawn(chromePath, args, {
+  chromeProcess = child_process.spawn(chromePath, args, {
     detached: true,
     stdio: 'ignore',
   });
@@ -110,7 +136,7 @@ export async function startBrowser(options = {}) {
       console.log(`  Chrome started on port ${port}`);
       return browserInstance;
     } catch {
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise<void>(r => setTimeout(r, 500));
     }
   }
 
@@ -120,7 +146,7 @@ export async function startBrowser(options = {}) {
 /**
  * Get the active page or create a new one
  */
-export async function getPage(browser) {
+export async function getPage(browser: Browser): Promise<Page> {
   const pages = await browser.pages();
   if (pages.length > 0) {
     return pages[pages.length - 1];
@@ -131,7 +157,7 @@ export async function getPage(browser) {
 /**
  * Navigate to URL and wait for load
  */
-export async function navigateTo(page, url, options = {}) {
+export async function navigateTo(page: Page, url: string, options: NavigateOptions = {}): Promise<void> {
   const { waitUntil = 'domcontentloaded', timeout = 30000 } = options;
   await page.goto(url, { waitUntil, timeout });
 }
@@ -139,7 +165,7 @@ export async function navigateTo(page, url, options = {}) {
 /**
  * Set up download handling
  */
-export async function setupDownloads(page, downloadPath) {
+export async function setupDownloads(page: Page, downloadPath: string): Promise<CDPSession> {
   fs.mkdirSync(downloadPath, { recursive: true });
   
   const client = await page.createCDPSession();
@@ -154,7 +180,7 @@ export async function setupDownloads(page, downloadPath) {
 /**
  * Wait for a file to appear in the download directory
  */
-export async function waitForDownload(downloadPath, options = {}) {
+export async function waitForDownload(downloadPath: string, options: WaitForDownloadOptions = {}): Promise<string> {
   const { timeout = 30000, expectedExtension = '.pdf' } = options;
   const startTime = Date.now();
   const existingFiles = new Set(fs.readdirSync(downloadPath));
@@ -170,7 +196,7 @@ export async function waitForDownload(downloadPath, options = {}) {
       }
     }
     
-    await new Promise(r => setTimeout(r, 500));
+    await new Promise<void>(r => setTimeout(r, 500));
   }
   
   throw new Error(`Download timeout after ${timeout}ms`);
@@ -179,7 +205,7 @@ export async function waitForDownload(downloadPath, options = {}) {
 /**
  * Take a screenshot for debugging
  */
-export async function screenshot(page, outputPath) {
+export async function screenshot(page: Page, outputPath?: string): Promise<string> {
   const screenshotPath = outputPath || path.join(os.tmpdir(), `kraxler-screenshot-${Date.now()}.png`);
   await page.screenshot({ path: screenshotPath, fullPage: false });
   return screenshotPath;
@@ -188,7 +214,7 @@ export async function screenshot(page, outputPath) {
 /**
  * Close the browser
  */
-export async function closeBrowser() {
+export async function closeBrowser(): Promise<void> {
   if (browserInstance) {
     try {
       await browserInstance.disconnect();
@@ -202,10 +228,10 @@ export async function closeBrowser() {
 /**
  * Kill Chrome processes on the debugging port
  */
-export function killChrome(port = DEFAULT_PORT) {
+export function killChrome(port: number = DEFAULT_PORT): void {
   try {
     if (process.platform === 'darwin' || process.platform === 'linux') {
-      execSync(`lsof -ti:${port} | xargs kill -9 2>/dev/null || true`, { stdio: 'ignore' });
+      child_process.execSync(`lsof -ti:${port} | xargs kill -9 2>/dev/null || true`, { stdio: 'ignore' });
     }
   } catch {
     // Ignore errors
@@ -214,17 +240,12 @@ export function killChrome(port = DEFAULT_PORT) {
 
 /**
  * Download an invoice from a URL
- * 
- * @param {string} url - The invoice download URL
- * @param {string} outputPath - Where to save the PDF
- * @param {Object} options - Additional options
- * @returns {Promise<{success: boolean, path?: string, needsLogin?: boolean, error?: string}>}
  */
-export async function downloadInvoice(url, outputPath, options = {}) {
+export async function downloadInvoice(url: string, outputPath: string, options: DownloadInvoiceOptions = {}): Promise<DownloadResult> {
   const { timeout = 60000 } = options;
   
-  let browser = null;
-  let page = null;
+  let browser: Browser | null = null;
+  let page: Page | null = null;
   
   try {
     browser = await startBrowser({ headless: false }); // Non-headless to handle login if needed
@@ -237,7 +258,7 @@ export async function downloadInvoice(url, outputPath, options = {}) {
     await navigateTo(page, url, { timeout });
     
     // Wait a bit for any redirects
-    await new Promise(r => setTimeout(r, 2000));
+    await new Promise<void>(r => setTimeout(r, 2000));
     
     // Check if we hit a login page
     const currentUrl = page.url();
@@ -263,7 +284,8 @@ export async function downloadInvoice(url, outputPath, options = {}) {
     }
     
     // Check if it's a direct PDF download
-    const contentType = await page.evaluate(() => document.contentType);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const contentType = await page.evaluate('document.contentType') as string | undefined;
     if (contentType === 'application/pdf') {
       // Save the PDF directly
       const pdfBuffer = await page.pdf();
@@ -313,7 +335,7 @@ export async function downloadInvoice(url, outputPath, options = {}) {
   } catch (error) {
     return {
       success: false,
-      error: error.message,
+      error: error instanceof Error ? error.message : String(error),
     };
   }
 }
@@ -322,10 +344,10 @@ export async function downloadInvoice(url, outputPath, options = {}) {
  * Interactive download with user assistance
  * Opens browser and waits for user to complete any login/captcha
  */
-export async function interactiveDownload(url, outputPath, options = {}) {
+export async function interactiveDownload(url: string, outputPath: string, options: InteractiveDownloadOptions = {}): Promise<DownloadResult> {
   const { timeout = 300000 } = options; // 5 minute timeout for user interaction
   
-  let browser = null;
+  let browser: Browser | null = null;
   
   try {
     browser = await startBrowser({ headless: false, copyProfile: true });
@@ -349,7 +371,7 @@ export async function interactiveDownload(url, outputPath, options = {}) {
       }
       
       return { success: true, path: outputPath };
-    } catch (error) {
+    } catch {
       return {
         success: false,
         error: 'Download timeout - no PDF detected',
@@ -359,7 +381,7 @@ export async function interactiveDownload(url, outputPath, options = {}) {
   } catch (error) {
     return {
       success: false,
-      error: error.message,
+      error: error instanceof Error ? error.message : String(error),
     };
   }
 }

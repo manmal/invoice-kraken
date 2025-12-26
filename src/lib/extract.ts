@@ -3,7 +3,7 @@
  */
 
 // Invoice number patterns
-const INVOICE_PATTERNS = [
+const INVOICE_PATTERNS: RegExp[] = [
   // German formats
   /RE[-\s]?\d{4}[-\s]?\d+/i,
   /Rechnungsnr\.?\s*:?\s*([A-Z0-9][\w-]+)/i,
@@ -24,7 +24,7 @@ const INVOICE_PATTERNS = [
 ];
 
 // Amount patterns
-const AMOUNT_PATTERNS = [
+const AMOUNT_PATTERNS: RegExp[] = [
   // European format with €
   /(\d{1,3}(?:\.\d{3})*,\d{2})\s*€/,
   /€\s*(\d{1,3}(?:\.\d{3})*,\d{2})/,
@@ -45,7 +45,7 @@ const AMOUNT_PATTERNS = [
 ];
 
 // Date patterns
-const DATE_PATTERNS = [
+const DATE_PATTERNS: RegExp[] = [
   // German format: DD.MM.YYYY
   /(\d{1,2}\.\d{1,2}\.\d{4})/,
   // ISO format: YYYY-MM-DD
@@ -55,9 +55,27 @@ const DATE_PATTERNS = [
 ];
 
 /**
+ * Extracted amount with raw string and cents value
+ */
+export interface ExtractedAmount {
+  raw: string;
+  cents: number;
+}
+
+/**
+ * Extracted invoice data
+ */
+export interface ExtractedInvoiceData {
+  invoiceNumber: string | null;
+  amount: ExtractedAmount | null;
+  invoiceDate: string | null;
+  senderDomain: string | null;
+}
+
+/**
  * Extract invoice number from text
  */
-export function extractInvoiceNumber(text) {
+export function extractInvoiceNumber(text: string | null | undefined): string | null {
   if (!text) return null;
   
   for (const pattern of INVOICE_PATTERNS) {
@@ -73,7 +91,7 @@ export function extractInvoiceNumber(text) {
  * Extract amount from text
  * Returns { raw: string, cents: number } or null
  */
-export function extractAmount(text) {
+export function extractAmount(text: string | null | undefined): ExtractedAmount | null {
   if (!text) return null;
   
   for (const pattern of AMOUNT_PATTERNS) {
@@ -90,7 +108,7 @@ export function extractAmount(text) {
 /**
  * Parse amount string to cents
  */
-export function parseAmountToCents(amountStr) {
+export function parseAmountToCents(amountStr: string | null | undefined): number {
   if (!amountStr) return 0;
   
   // Remove currency symbols and whitespace
@@ -115,7 +133,7 @@ export function parseAmountToCents(amountStr) {
 /**
  * Extract date from text
  */
-export function extractDate(text) {
+export function extractDate(text: string | null | undefined): string | null {
   if (!text) return null;
   
   for (const pattern of DATE_PATTERNS) {
@@ -130,7 +148,7 @@ export function extractDate(text) {
 /**
  * Normalize date to ISO format YYYY-MM-DD
  */
-function normalizeDate(dateStr) {
+function normalizeDate(dateStr: string): string {
   // German format DD.MM.YYYY
   const germanMatch = dateStr.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/);
   if (germanMatch) {
@@ -156,7 +174,7 @@ function normalizeDate(dateStr) {
 /**
  * Extract sender domain from email address
  */
-export function extractSenderDomain(sender) {
+export function extractSenderDomain(sender: string | null | undefined): string | null {
   if (!sender) return null;
   
   // Extract email from "Name <email@domain.com>" format
@@ -178,7 +196,7 @@ export function extractSenderDomain(sender) {
 /**
  * Extract all invoice data from text
  */
-export function extractInvoiceData(text, sender) {
+export function extractInvoiceData(text: string | null | undefined, sender: string | null | undefined): ExtractedInvoiceData {
   return {
     invoiceNumber: extractInvoiceNumber(text),
     amount: extractAmount(text),

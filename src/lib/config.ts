@@ -3,15 +3,25 @@
  * Stores user preferences and tax-relevant settings
  */
 
-import fs from 'fs';
-import path from 'path';
-import readline from 'readline';
+import * as fs from 'fs';
+import * as readline from 'readline';
 import { getConfigDir, getConfigPath } from './paths.js';
+import { KraxlerConfig, CompanyCarType } from '../types.js';
 
-const CONFIG_DIR = getConfigDir();
-const CONFIG_FILE = getConfigPath();
+const CONFIG_DIR: string = getConfigDir();
+const CONFIG_FILE: string = getConfigPath();
 
-const DEFAULT_CONFIG = {
+interface ChoiceOption<T> {
+  label: string;
+  value: T;
+}
+
+interface VehicleVatRecoveryResult {
+  recoverable: boolean | 'partial';
+  reason: string;
+}
+
+const DEFAULT_CONFIG: KraxlerConfig = {
   // Tax jurisdiction
   tax_jurisdiction: 'AT', // Austria
   
@@ -37,22 +47,22 @@ const DEFAULT_CONFIG = {
   
   // Model configuration
   // Preset: 'cheap' | 'balanced' | 'quality' | 'local'
-  model_preset: null,
+  model_preset: undefined,
   
   // Per-task model overrides (optional)
   // models: {
   //   emailClassification: { provider: 'google', modelId: 'gemini-2.0-flash' },
   //   browserDownload: { provider: 'anthropic', modelId: 'claude-sonnet-4-5' },
   // }
-  models: null,
+  models: undefined,
 };
 
-let cachedConfig = null;
+let cachedConfig: KraxlerConfig | null = null;
 
 /**
  * Ensure config directory exists
  */
-function ensureConfigDir() {
+function ensureConfigDir(): void {
   if (!fs.existsSync(CONFIG_DIR)) {
     fs.mkdirSync(CONFIG_DIR, { recursive: true });
   }
@@ -61,14 +71,14 @@ function ensureConfigDir() {
 /**
  * Load configuration from disk
  */
-export function loadConfig() {
-  if (cachedConfig) return cachedConfig;
+export function loadConfig(): KraxlerConfig {
+  if (cachedConfig) return cachedConfig!;
   
   ensureConfigDir();
   
   if (fs.existsSync(CONFIG_FILE)) {
     try {
-      const data = fs.readFileSync(CONFIG_FILE, 'utf-8');
+      const data: string = fs.readFileSync(CONFIG_FILE, 'utf-8');
       cachedConfig = { ...DEFAULT_CONFIG, ...JSON.parse(data) };
     } catch (error) {
       console.error('Warning: Could not parse config file, using defaults');
@@ -78,13 +88,13 @@ export function loadConfig() {
     cachedConfig = { ...DEFAULT_CONFIG };
   }
   
-  return cachedConfig;
+  return cachedConfig!;
 }
 
 /**
  * Save configuration to disk
  */
-export function saveConfig(config) {
+export function saveConfig(config: KraxlerConfig): void {
   ensureConfigDir();
   cachedConfig = config;
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
@@ -93,9 +103,9 @@ export function saveConfig(config) {
 /**
  * Update specific config values
  */
-export function updateConfig(updates) {
-  const config = loadConfig();
-  const newConfig = { ...config, ...updates };
+export function updateConfig(updates: Partial<KraxlerConfig>): KraxlerConfig {
+  const config: KraxlerConfig = loadConfig();
+  const newConfig: KraxlerConfig = { ...config, ...updates };
   saveConfig(newConfig);
   return newConfig;
 }
@@ -103,15 +113,15 @@ export function updateConfig(updates) {
 /**
  * Check if initial setup is needed
  */
-export function needsSetup() {
-  const config = loadConfig();
+export function needsSetup(): boolean {
+  const config: KraxlerConfig = loadConfig();
   return !config.setup_completed;
 }
 
 /**
  * Create readline interface for prompts
  */
-function createPrompt() {
+function createPrompt(): readline.Interface {
   return readline.createInterface({
     input: process.stdin,
     output: process.stdout,
@@ -121,9 +131,9 @@ function createPrompt() {
 /**
  * Ask a yes/no question
  */
-async function askYesNo(rl, question) {
+async function askYesNo(rl: readline.Interface, question: string): Promise<boolean> {
   return new Promise((resolve) => {
-    rl.question(`${question} (y/n): `, (answer) => {
+    rl.question(`${question} (y/n): `, (answer: string) => {
       resolve(answer.toLowerCase().startsWith('y'));
     });
   });
@@ -132,15 +142,15 @@ async function askYesNo(rl, question) {
 /**
  * Ask a multiple choice question
  */
-async function askChoice(rl, question, options) {
+async function askChoice<T>(rl: readline.Interface, question: string, options: ChoiceOption<T>[]): Promise<T> {
   console.log(`\n${question}`);
   options.forEach((opt, i) => {
     console.log(`  ${i + 1}) ${opt.label}`);
   });
   
   return new Promise((resolve) => {
-    rl.question(`Enter choice (1-${options.length}): `, (answer) => {
-      const idx = parseInt(answer, 10) - 1;
+    rl.question(`Enter choice (1-${options.length}): `, (answer: string) => {
+      const idx: number = parseInt(answer, 10) - 1;
       if (idx >= 0 && idx < options.length) {
         resolve(options[idx].value);
       } else {
@@ -153,8 +163,8 @@ async function askChoice(rl, question, options) {
 /**
  * Run initial setup wizard
  */
-export async function runSetupWizard() {
-  const rl = createPrompt();
+export async function runSetupWizard(): Promise<KraxlerConfig> {
+  const rl: readline.Interface = createPrompt();
   
   console.log(`
 ╔════════════════════════════════════════════════════════════════════════════╗
@@ -177,7 +187,7 @@ export async function runSetupWizard() {
 ╚════════════════════════════════════════════════════════════════════════════╝
 `);
 
-  const understood = await askYesNo(rl, 'Do you understand and accept this disclaimer?');
+  const understood: boolean = await askYesNo(rl, 'Do you understand and accept this disclaimer?');
   
   if (!understood) {
     console.log('\nSetup cancelled. You must accept the disclaimer to use this tool.');
@@ -190,11 +200,11 @@ export async function runSetupWizard() {
   console.log('For regular ICE/hybrid cars: NO Vorsteuerabzug (VAT recovery)');
   console.log('For electric vehicles (0g CO₂): FULL Vorsteuerabzug allowed!\n');
   
-  const hasCompanyCar = await askYesNo(rl, 'Do you have a company car (Firmen-KFZ)?');
+  const hasCompanyCar: boolean = await askYesNo(rl, 'Do you have a company car (Firmen-KFZ)?');
   
-  let companyCarType = null;
+  let companyCarType: CompanyCarType | null = null;
   if (hasCompanyCar) {
-    companyCarType = await askChoice(rl, 'What type of company car do you have?', [
+    companyCarType = await askChoice<CompanyCarType>(rl, 'What type of company car do you have?', [
       { label: 'Gasoline/Diesel (ICE) - No VAT recovery', value: 'ice' },
       { label: 'Full Electric (BEV, 0g CO₂) - Full VAT recovery!', value: 'electric' },
       { label: 'Plug-in Hybrid (PHEV) - Partial VAT (check with Steuerberater)', value: 'hybrid_plugin' },
@@ -206,13 +216,13 @@ export async function runSetupWizard() {
   console.log('If your annual revenue is under €55,000 (2025), you may be exempt from');
   console.log('charging VAT, but you also CANNOT recover any input VAT (Vorsteuer).\n');
   
-  const isKleinunternehmer = await askYesNo(rl, 'Are you a Kleinunternehmer (< €55k revenue, VAT exempt)?');
+  const isKleinunternehmer: boolean = await askYesNo(rl, 'Are you a Kleinunternehmer (< €55k revenue, VAT exempt)?');
   
   console.log('\n── Business Use Percentages ─────────────────────────────────────────\n');
   console.log('For mixed-use expenses, what percentage is typically business use?');
   console.log('(You can change these later with: kraxler config)\n');
   
-  const telecomPercent = await askChoice(rl, 'Mobile phone business use:', [
+  const telecomPercent: number = await askChoice<number>(rl, 'Mobile phone business use:', [
     { label: '50% (default)', value: 50 },
     { label: '60%', value: 60 },
     { label: '70%', value: 70 },
@@ -220,7 +230,7 @@ export async function runSetupWizard() {
     { label: '100% (dedicated business phone)', value: 100 },
   ]);
   
-  const internetPercent = await askChoice(rl, 'Internet business use:', [
+  const internetPercent: number = await askChoice<number>(rl, 'Internet business use:', [
     { label: '50% (default)', value: 50 },
     { label: '60%', value: 60 },
     { label: '70%', value: 70 },
@@ -231,7 +241,7 @@ export async function runSetupWizard() {
   rl.close();
   
   // Save configuration
-  const config = updateConfig({
+  const config: KraxlerConfig = updateConfig({
     has_company_car: hasCompanyCar,
     company_car_type: companyCarType,
     is_kleinunternehmer: isKleinunternehmer,
@@ -248,13 +258,13 @@ export async function runSetupWizard() {
 ║  Your settings:                                                            ║`);
   
   if (hasCompanyCar) {
-    const carTypeLabels = {
+    const carTypeLabels: Record<CompanyCarType, string> = {
       ice: 'Gasoline/Diesel (no VAT recovery)',
       electric: 'Electric (full VAT recovery)',
       hybrid_plugin: 'Plug-in Hybrid (partial VAT)',
       hybrid: 'Hybrid (no VAT recovery)',
     };
-    console.log(`║    • Company car: ${carTypeLabels[companyCarType].padEnd(43)}║`);
+    console.log(`║    • Company car: ${carTypeLabels[companyCarType!].padEnd(43)}║`);
   } else {
     console.log(`║    • Company car: None                                             ║`);
   }
@@ -263,7 +273,7 @@ export async function runSetupWizard() {
   console.log(`║    • Telecom business use: ${telecomPercent}%                                      ║`);
   console.log(`║    • Internet business use: ${internetPercent}%                                     ║`);
   console.log(`║                                                                            ║`);
-  console.log(`║  Config saved to: ${CONFIG_FILE.replace(process.env.HOME, '~').substring(0, 50).padEnd(50)}   ║`);
+  console.log(`║  Config saved to: ${CONFIG_FILE.replace(process.env.HOME || '', '~').substring(0, 50).padEnd(50)}   ║`);
   console.log(`║  Run 'kraxler config' to change settings anytime.                   ║`);
   console.log(`╚════════════════════════════════════════════════════════════════════════════╝
 `);
@@ -274,8 +284,8 @@ export async function runSetupWizard() {
 /**
  * Get vehicle VAT recovery status based on config
  */
-export function getVehicleVatRecovery() {
-  const config = loadConfig();
+export function getVehicleVatRecovery(): VehicleVatRecoveryResult {
+  const config: KraxlerConfig = loadConfig();
   
   // Kleinunternehmer never gets VAT recovery
   if (config.is_kleinunternehmer) {
@@ -303,32 +313,32 @@ export function getVehicleVatRecovery() {
 /**
  * Get telecom business percentage
  */
-export function getTelecomBusinessPercent() {
-  const config = loadConfig();
+export function getTelecomBusinessPercent(): number {
+  const config: KraxlerConfig = loadConfig();
   return config.telecom_business_percent || 50;
 }
 
 /**
  * Get internet business percentage
  */
-export function getInternetBusinessPercent() {
-  const config = loadConfig();
+export function getInternetBusinessPercent(): number {
+  const config: KraxlerConfig = loadConfig();
   return config.internet_business_percent || 50;
 }
 
 /**
  * Check if user is Kleinunternehmer (no VAT recovery at all)
  */
-export function isKleinunternehmer() {
-  const config = loadConfig();
+export function isKleinunternehmer(): boolean {
+  const config: KraxlerConfig = loadConfig();
   return config.is_kleinunternehmer === true;
 }
 
 /**
  * Print current configuration
  */
-export function printConfig() {
-  const config = loadConfig();
+export function printConfig(): void {
+  const config: KraxlerConfig = loadConfig();
   
   console.log(`
 ╔════════════════════════════════════════════════════════════════════════════╗
@@ -338,14 +348,14 @@ export function printConfig() {
   console.log(`║  Tax jurisdiction: Austria (AT)                                            ║`);
   
   if (config.has_company_car) {
-    const carTypeLabels = {
+    const carTypeLabels: Record<CompanyCarType, string> = {
       ice: 'Gasoline/Diesel',
       electric: 'Electric (0g CO₂)',
       hybrid_plugin: 'Plug-in Hybrid',
       hybrid: 'Hybrid',
     };
-    const vatStatus = getVehicleVatRecovery();
-    console.log(`║  Company car: ${(carTypeLabels[config.company_car_type] || 'Unknown').padEnd(49)}║`);
+    const vatStatus: VehicleVatRecoveryResult = getVehicleVatRecovery();
+    console.log(`║  Company car: ${(carTypeLabels[config.company_car_type!] || 'Unknown').padEnd(49)}║`);
     console.log(`║    VAT recovery: ${vatStatus.recoverable ? 'Yes' : 'No'} - ${vatStatus.reason.substring(0, 40).padEnd(40)}║`);
   } else {
     console.log(`║  Company car: None                                                         ║`);
@@ -365,7 +375,7 @@ export function printConfig() {
   }
   
   console.log(`║                                                                            ║`);
-  console.log(`║  Config: ${CONFIG_FILE.replace(process.env.HOME, '~').padEnd(60)}  ║`);
+  console.log(`║  Config: ${CONFIG_FILE.replace(process.env.HOME || '', '~').padEnd(60)}  ║`);
   console.log(`╚════════════════════════════════════════════════════════════════════════════╝
 
 Run 'npx kraxler models' to see full AI model configuration.

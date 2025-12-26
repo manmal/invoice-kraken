@@ -24,7 +24,7 @@ import { needsSetup, runSetupWizard } from './lib/config.js';
 import { printPaths, getAllPaths } from './lib/paths.js';
 import { setModelOverrides } from './lib/models.js';
 
-const program = new Command();
+const program: Command = new Command();
 
 program
   .name('kraxler')
@@ -44,11 +44,11 @@ program
   .option('-q, --quarter <quarter>', 'Quarter to scan (e.g., 2025-Q4)')
   .option('--from <date>', 'Start date (YYYY-MM-DD)')
   .option('--to <date>', 'End date (YYYY-MM-DD)')
-  .action(async (options) => {
+  .action(async (options: any): Promise<void> => {
     try {
       await scanCommand(options);
-    } catch (error) {
-      console.error('Error:', error.message);
+    } catch (error: unknown) {
+      console.error('Error:', (error as Error).message);
       process.exit(1);
     } finally {
       closeDb();
@@ -64,15 +64,15 @@ program
   .option('--strict', 'Also auto-mark medium-confidence duplicates')
   .option('--model <id>', 'Override AI model (e.g., gemini-2.5-flash, gpt-4o)')
   .option('--provider <name>', 'Override AI provider (e.g., google, openai, anthropic)')
-  .action(async (options) => {
+  .action(async (options: any): Promise<void> => {
     try {
       if (options.model || options.provider) {
         setModelOverrides({ model: options.model, provider: options.provider });
       }
       options.batchSize = parseInt(options.batchSize, 10);
       await extractCommand(options);
-    } catch (error) {
-      console.error('Error:', error.message);
+    } catch (error: unknown) {
+      console.error('Error:', (error as Error).message);
       process.exit(1);
     } finally {
       closeDb();
@@ -84,12 +84,12 @@ program
   .description('Stage 3: Crawl links to download remaining invoices via browser')
   .requiredOption('-a, --account <email>', 'Gmail account to use')
   .option('-b, --batch-size <n>', 'Number of invoices to process per batch', '5')
-  .action(async (options) => {
+  .action(async (options: any): Promise<void> => {
     try {
       options.batchSize = parseInt(options.batchSize, 10);
       await crawlCommand(options);
-    } catch (error) {
-      console.error('Error:', error.message);
+    } catch (error: unknown) {
+      console.error('Error:', (error as Error).message);
       process.exit(1);
     } finally {
       closeDb();
@@ -105,12 +105,12 @@ program
   .option('--summary', 'Show tax deductibility summary')
   .option('--year <year>', 'Filter summary by year')
   .option('--include-duplicates', 'Include duplicates in the list')
-  .action(async (options) => {
+  .action(async (options: any): Promise<void> => {
     try {
       if (options.year) options.year = parseInt(options.year, 10);
       await reviewCommand(options);
-    } catch (error) {
-      console.error('Error:', error.message);
+    } catch (error: unknown) {
+      console.error('Error:', (error as Error).message);
       process.exit(1);
     } finally {
       closeDb();
@@ -131,15 +131,15 @@ program
   .option('--strict', 'Also auto-mark medium-confidence duplicates')
   .option('--model <id>', 'Override AI model (e.g., gemini-2.5-flash, gpt-4o)')
   .option('--provider <name>', 'Override AI provider (e.g., google, openai, anthropic)')
-  .action(async (options) => {
+  .action(async (options: any): Promise<void> => {
     try {
       if (options.model || options.provider) {
         setModelOverrides({ model: options.model, provider: options.provider });
       }
       options.batchSize = parseInt(options.batchSize, 10);
       await runCommand(options);
-    } catch (error) {
-      console.error('Error:', error.message);
+    } catch (error: unknown) {
+      console.error('Error:', (error as Error).message);
       process.exit(1);
     } finally {
       await closeBrowser();
@@ -156,11 +156,11 @@ program
   .description('Show completion status for a year')
   .requiredOption('-a, --account <email>', 'Gmail account to use')
   .option('-y, --year <year>', 'Year to show status for (default: current year)')
-  .action(async (options) => {
+  .action(async (options: any): Promise<void> => {
     try {
       await statusCommand(options);
-    } catch (error) {
-      console.error('Error:', error.message);
+    } catch (error: unknown) {
+      console.error('Error:', (error as Error).message);
       process.exit(1);
     } finally {
       closeDb();
@@ -173,11 +173,11 @@ program
   .requiredOption('-a, --account <email>', 'Gmail account to use')
   .option('-l, --limit <n>', 'Number of actions to show', '20')
   .option('--failed', 'Show only failed/interrupted actions')
-  .action(async (options) => {
+  .action(async (options: any): Promise<void> => {
     try {
       await logCommand(options);
-    } catch (error) {
-      console.error('Error:', error.message);
+    } catch (error: unknown) {
+      console.error('Error:', (error as Error).message);
       process.exit(1);
     } finally {
       closeDb();
@@ -191,11 +191,11 @@ program
   .option('--show', 'Show current configuration')
   .option('--set <key=value>', 'Set a specific configuration value')
   .option('--models', 'Interactive model configuration')
-  .action(async (options) => {
+  .action(async (options: any): Promise<void> => {
     try {
       await configCommand(options);
-    } catch (error) {
-      console.error('Error:', error.message);
+    } catch (error: unknown) {
+      console.error('Error:', (error as Error).message);
       process.exit(1);
     }
   });
@@ -205,11 +205,11 @@ program
   .description('View AI model configuration and auth status')
   .option('--available', 'Show all available models')
   .option('--presets', 'Show available presets')
-  .action(async (options) => {
+  .action(async (options: any): Promise<void> => {
     try {
       await modelsCommand(options);
-    } catch (error) {
-      console.error('Error:', error.message);
+    } catch (error: unknown) {
+      console.error('Error:', (error as Error).message);
       process.exit(1);
     }
   });
@@ -218,7 +218,7 @@ program
   .command('paths')
   .description('Show storage locations (database, config, cache)')
   .option('--json', 'Output as JSON')
-  .action((options) => {
+  .action((options: any): void => {
     if (options.json) {
       console.log(JSON.stringify(getAllPaths(), null, 2));
     } else {
@@ -230,16 +230,16 @@ program
 // SETUP & ERROR HANDLING
 // ============================================================================
 
-const setupRequiredCommands = ['scan', 'extract', 'crawl', 'review', 'run', 'status'];
+const setupRequiredCommands: string[] = ['scan', 'extract', 'crawl', 'review', 'run', 'status'];
 const originalParse = program.parse.bind(program);
-program.parse = async function(args) {
-  const allArgs = args || process.argv;
+(program as any).parse = async function(args?: readonly string[]): Promise<Command> {
+  const allArgs: readonly string[] = args || process.argv;
   
   if (allArgs.includes('--help') || allArgs.includes('-h')) {
     return originalParse(args);
   }
   
-  const commandArg = allArgs[2];
+  const commandArg: string = allArgs[2];
   
   if (setupRequiredCommands.includes(commandArg) && needsSetup()) {
     console.log('First run detected. Running initial setup...\n');
@@ -249,14 +249,14 @@ program.parse = async function(args) {
   return originalParse(args);
 };
 
-process.on('uncaughtException', (error) => {
+process.on('uncaughtException', (error: Error): void => {
   console.error('Uncaught error:', error.message);
   closeDb();
   process.exit(1);
 });
 
-process.on('unhandledRejection', (error) => {
-  console.error('Unhandled rejection:', error.message);
+process.on('unhandledRejection', (error: unknown): void => {
+  console.error('Unhandled rejection:', (error as Error).message);
   closeDb();
   process.exit(1);
 });

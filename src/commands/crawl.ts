@@ -2,10 +2,9 @@
  * Download command - Download remaining invoices using browser automation
  */
 
-import fs from 'fs';
-import path from 'path';
+import * as fs from 'fs';
+import * as path from 'path';
 import { 
-  getDb, 
   getEmailsByStatus, 
   updateEmailStatus,
   findDuplicateByHash,
@@ -14,16 +13,23 @@ import { getCached } from '../lib/email-cache.js';
 import { downloadInvoice, closeBrowser } from '../lib/browser.js';
 import { hashFile } from '../utils/hash.js';
 import { getInvoiceOutputPath } from '../utils/paths.js';
+import type { Email, CrawlOptions, DownloadResult } from '../types.js';
 
-export async function crawlCommand(options) {
+interface CrawlStats {
+  downloaded: number;
+  duplicates: number;
+  needsLogin: number;
+  failed: number;
+}
+
+export async function crawlCommand(options: CrawlOptions): Promise<void> {
   const { account, batchSize = 5 } = options;
   
   console.log(`Downloading invoices for account: ${account}`);
   console.log(`Batch size: ${batchSize}\n`);
   
   // Get pending download emails
-  const db = getDb();
-  const pendingEmails = getEmailsByStatus(account, 'pending_download', 100);
+  const pendingEmails: Email[] = getEmailsByStatus(account, 'pending_download', 100);
   
   if (pendingEmails.length === 0) {
     console.log('No invoices pending download.');
@@ -33,7 +39,7 @@ export async function crawlCommand(options) {
   
   console.log(`Found ${pendingEmails.length} invoices pending download.\n`);
   
-  let stats = {
+  const stats: CrawlStats = {
     downloaded: 0,
     duplicates: 0,
     needsLogin: 0,
@@ -71,7 +77,7 @@ export async function crawlCommand(options) {
         console.log(`  URL: ${truncate(downloadUrl, 60)}`);
         
         // Use browser automation to download
-        const result = await downloadInvoice(downloadUrl, outputPath);
+        const result: DownloadResult = await downloadInvoice(downloadUrl, outputPath);
         
         if (result.success && result.path) {
           const filePath = result.path;
@@ -126,9 +132,10 @@ export async function crawlCommand(options) {
           stats.failed++;
         }
       } catch (error) {
-        console.error(`  ✗ Error: ${error.message}`);
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error(`  ✗ Error: ${errorMessage}`);
         updateEmailStatus(email.id, account, 'manual', {
-          notes: `Error: ${error.message}`,
+          notes: `Error: ${errorMessage}`,
         });
         stats.failed++;
       }
@@ -154,9 +161,9 @@ export async function crawlCommand(options) {
 /**
  * Extract download URL from email - checks notes, snippet, and email body cache
  */
-function extractDownloadUrl(email) {
+function extractDownloadUrl(email: Email): string | null {
   // First check notes/snippet
-  const sources = [email.notes, email.snippet, email.raw_json];
+  const sources: (string | null)[] = [email.notes, email.snippet, email.raw_json];
   
   // Also get the cached email body
   const cached = getCached(email.id);
@@ -165,7 +172,7 @@ function extractDownloadUrl(email) {
   }
   
   // URL patterns in priority order
-  const urlPatterns = [
+  const urlPatterns: RegExp[] = [
     // Direct PDF links
     /https?:\/\/[^\s<>"']+\.pdf[^\s<>"']*/gi,
     // Common invoice portal patterns
@@ -175,7 +182,7 @@ function extractDownloadUrl(email) {
   ];
   
   // Skip patterns
-  const skipPatterns = [
+  const skipPatterns: RegExp[] = [
     /unsubscribe/i,
     /tracking/i,
     /click\./i,
@@ -198,7 +205,7 @@ function extractDownloadUrl(email) {
       if (matches && matches.length > 0) {
         for (const match of matches) {
           // Skip unwanted URLs
-          const shouldSkip = skipPatterns.some(skip => skip.test(match));
+          const shouldSkip = skipPatterns.some((skip: RegExp) => skip.test(match));
           if (shouldSkip) continue;
           
           // Clean up the URL (remove trailing punctuation)
@@ -212,7 +219,7 @@ function extractDownloadUrl(email) {
   return null;
 }
 
-function truncate(str, len) {
+function truncate(str: string | null, len: number): string {
   if (!str) return '';
   return str.length > len ? str.substring(0, len - 3) + '...' : str;
 }

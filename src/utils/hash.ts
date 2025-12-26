@@ -2,15 +2,15 @@
  * File hashing utilities
  */
 
-import { createHash } from 'crypto';
-import fs from 'fs';
+import * as crypto from 'crypto';
+import * as fs from 'fs';
 
 /**
  * Compute SHA256 hash of a file
  */
-export function hashFile(filePath) {
+export function hashFile(filePath: string): string {
   const fileBuffer = fs.readFileSync(filePath);
-  const hashSum = createHash('sha256');
+  const hashSum = crypto.createHash('sha256');
   hashSum.update(fileBuffer);
   return hashSum.digest('hex');
 }
@@ -18,8 +18,8 @@ export function hashFile(filePath) {
 /**
  * Compute SHA256 hash of a buffer
  */
-export function hashBuffer(buffer) {
-  const hashSum = createHash('sha256');
+export function hashBuffer(buffer: Buffer): string {
+  const hashSum = crypto.createHash('sha256');
   hashSum.update(buffer);
   return hashSum.digest('hex');
 }
@@ -27,8 +27,8 @@ export function hashBuffer(buffer) {
 /**
  * Compute SHA256 hash of a string
  */
-export function hashString(str) {
-  const hashSum = createHash('sha256');
+export function hashString(str: string): string {
+  const hashSum = crypto.createHash('sha256');
   hashSum.update(str);
   return hashSum.digest('hex');
 }

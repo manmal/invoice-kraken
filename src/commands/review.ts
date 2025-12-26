@@ -2,12 +2,17 @@
  * List command - Display remaining invoices that need manual handling
  */
 
-import { getDb, getManualItems, getDeductibilitySummary, getEmailsByStatus } from '../lib/db.js';
+import { getManualItems, getDeductibilitySummary, getEmailsByStatus } from '../lib/db.js';
+import type { Email, ReviewOptions, DeductibleCategory } from '../types.js';
 
-export async function reviewCommand(options) {
+interface DeductibilitySummaryRow {
+  deductible: DeductibleCategory | null;
+  count: number;
+  total_cents: number | null;
+}
+
+export async function reviewCommand(options: ReviewOptions): Promise<void> {
   const { account, format = 'table', deductible: deductibleFilter, summary, includeDuplicates } = options;
-  
-  const db = getDb();
   
   // Summary mode
   if (summary) {
@@ -16,7 +21,7 @@ export async function reviewCommand(options) {
   }
   
   // Get items based on filter
-  let items = getManualItems(account, deductibleFilter);
+  let items: Email[] = getManualItems(account, deductibleFilter);
   
   if (includeDuplicates) {
     const duplicates = getEmailsByStatus(account, 'duplicate', 1000);
@@ -63,7 +68,7 @@ export async function reviewCommand(options) {
   }
   
   // Deductibility breakdown for manual items
-  const deductCounts = {
+  const deductCounts: Record<string, number> = {
     full: items.filter(i => i.deductible === 'full').length,
     vehicle: items.filter(i => i.deductible === 'vehicle').length,
     meals: items.filter(i => i.deductible === 'meals').length,
@@ -72,7 +77,7 @@ export async function reviewCommand(options) {
     unclear: items.filter(i => i.deductible === 'unclear' || !i.deductible).length,
   };
   
-  const parts = [];
+  const parts: string[] = [];
   if (deductCounts.full > 0) parts.push(`💼 ${deductCounts.full} full`);
   if (deductCounts.vehicle > 0) parts.push(`🚗 ${deductCounts.vehicle} vehicle`);
   if (deductCounts.meals > 0) parts.push(`🍽️ ${deductCounts.meals} meals`);
@@ -85,7 +90,7 @@ export async function reviewCommand(options) {
   }
 }
 
-function printTable(items, includeDuplicates) {
+function printTable(items: Email[], _includeDuplicates: boolean): void {
   console.log(`\n${'─'.repeat(100)}`);
   console.log(
     padRight('Date', 12) +
@@ -98,7 +103,7 @@ function printTable(items, includeDuplicates) {
   
   for (const item of items) {
     const date = formatDate(item.date);
-    const from = truncate(extractDomain(item.sender) || item.sender, 23);
+    const from = truncate(extractDomain(item.sender) || item.sender || '', 23);
     const deduct = getDeductIcon(item.deductible);
     const status = item.status === 'duplicate' ? '⊘ dup' : '⚠ manual';
     
@@ -108,7 +113,7 @@ function printTable(items, includeDuplicates) {
     } else if (item.notes) {
       details = truncate(item.notes, 35);
     } else {
-      details = truncate(item.subject, 35);
+      details = truncate(item.subject || '', 35);
     }
     
     console.log(
@@ -129,24 +134,24 @@ function printTable(items, includeDuplicates) {
   }
 }
 
-function printMarkdown(items) {
+function printMarkdown(items: Email[]): void {
   console.log('# Invoices Requiring Manual Handling\n');
   console.log('| Date | From | Deductible | Status | Details |');
   console.log('|------|------|------------|--------|---------|');
   
   for (const item of items) {
     const date = formatDate(item.date);
-    const from = extractDomain(item.sender) || item.sender;
+    const from = extractDomain(item.sender) || item.sender || '';
     const deduct = item.deductible || 'unclear';
     const status = item.status;
-    const details = item.notes || item.subject;
+    const details = item.notes || item.subject || '';
     
     console.log(`| ${date} | ${from} | ${deduct} | ${status} | ${details} |`);
   }
 }
 
-function printDeductibilitySummary(account, year) {
-  const summary = getDeductibilitySummary(account, year);
+function printDeductibilitySummary(account: string, year: number | undefined): void {
+  const summary = getDeductibilitySummary(account, year) as DeductibilitySummaryRow[];
   
   if (summary.length === 0) {
     console.log('No downloaded invoices found.');
@@ -192,27 +197,27 @@ function printDeductibilitySummary(account, year) {
   console.log(`   ⚠ Manual: ${manual.length}`);
 }
 
-function getDeductIcon(deductible) {
-  const icons = {
+function getDeductIcon(deductible: DeductibleCategory | null): string {
+  const icons: Record<string, string> = {
     full: '💼',
     partial: '📊',
     none: '🚫',
     unclear: '❓',
   };
-  return icons[deductible] || '❓';
+  return icons[deductible || 'unclear'] || '❓';
 }
 
-function getDeductLabel(deductible) {
-  const labels = {
+function getDeductLabel(deductible: DeductibleCategory | null): string {
+  const labels: Record<string, string> = {
     full: 'Fully Deductible',
     partial: 'Partially Deductible',
     none: 'Not Deductible',
     unclear: 'Needs Review',
   };
-  return labels[deductible] || 'Unknown';
+  return labels[deductible || 'unclear'] || 'Unknown';
 }
 
-function formatDate(dateStr) {
+function formatDate(dateStr: string | null): string {
   if (!dateStr) return 'Unknown';
   
   try {
@@ -224,29 +229,29 @@ function formatDate(dateStr) {
   }
 }
 
-function formatCurrency(cents) {
+function formatCurrency(cents: number | null): string {
   if (!cents) return '€0.00';
   const euros = cents / 100;
   return `€${euros.toLocaleString('de-AT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-function extractDomain(sender) {
+function extractDomain(sender: string | null): string | null {
   if (!sender) return null;
   const match = sender.match(/@([^@>]+)/);
   return match ? match[1] : null;
 }
 
-function truncate(str, len) {
+function truncate(str: string | null, len: number): string {
   if (!str) return '';
   return str.length > len ? str.substring(0, len - 3) + '...' : str;
 }
 
-function padRight(str, len) {
-  str = str || '';
-  return str.length >= len ? str.substring(0, len) : str + ' '.repeat(len - str.length);
+function padRight(str: string | null, len: number): string {
+  const s = str || '';
+  return s.length >= len ? s.substring(0, len) : s + ' '.repeat(len - s.length);
 }
 
-function padLeft(str, len) {
-  str = str || '';
-  return str.length >= len ? str : ' '.repeat(len - str.length) + str;
+function padLeft(str: string | null, len: number): string {
+  const s = str || '';
+  return s.length >= len ? s : ' '.repeat(len - s.length) + s;
 }

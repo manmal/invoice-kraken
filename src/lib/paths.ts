@@ -14,17 +14,28 @@
  */
 
 import envPaths from 'env-paths';
-import path from 'path';
-import fs from 'fs';
+import * as path from 'path';
+import * as fs from 'fs';
 
 // Get XDG-compliant paths for 'kraxler'
 // suffix: '' disables the default '-nodejs' suffix
 const paths = envPaths('kraxler', { suffix: '' });
 
+export interface AllPaths {
+  data: string;
+  config: string;
+  cache: string;
+  log: string;
+  temp: string;
+  database: string;
+  configFile: string;
+  invoices: string;
+}
+
 /**
  * Ensure a directory exists
  */
-export function ensureDir(dirPath) {
+export function ensureDir(dirPath: string): string {
   if (!fs.existsSync(dirPath)) {
     fs.mkdirSync(dirPath, { recursive: true });
   }
@@ -34,67 +45,54 @@ export function ensureDir(dirPath) {
 /**
  * Get the data directory path
  * Used for: SQLite database, persistent data
- * 
- * @returns {string} Path to data directory
  */
-export function getDataDir() {
+export function getDataDir(): string {
   return ensureDir(paths.data);
 }
 
 /**
  * Get the config directory path
  * Used for: User preferences, settings
- * 
- * @returns {string} Path to config directory  
  */
-export function getConfigDir() {
+export function getConfigDir(): string {
   return ensureDir(paths.config);
 }
 
 /**
  * Get the cache directory path
  * Used for: Email body cache, temporary data
- * 
- * @returns {string} Path to cache directory
  */
-export function getCacheDir() {
+export function getCacheDir(): string {
   return ensureDir(paths.cache);
 }
 
 /**
  * Get the log directory path
  * Used for: Log files (future)
- * 
- * @returns {string} Path to log directory
  */
-export function getLogDir() {
+export function getLogDir(): string {
   return ensureDir(paths.log);
 }
 
 /**
  * Get path to the main database file
- * @returns {string} Full path to kraxler.db
  */
-export function getDatabasePath() {
+export function getDatabasePath(): string {
   return path.join(getDataDir(), 'kraxler.db');
 }
 
 /**
  * Get path to the config file
- * @returns {string} Full path to config.json
  */
-export function getConfigPath() {
+export function getConfigPath(): string {
   return path.join(getConfigDir(), 'config.json');
 }
 
 /**
  * Get the invoices output directory
  * This is special - it stays in cwd since users want invoices in their project
- * 
- * @param {string} [customPath] - Optional custom path override
- * @returns {string} Path to invoices directory
  */
-export function getInvoicesDir(customPath) {
+export function getInvoicesDir(customPath?: string): string {
   const dir = customPath || path.join(process.cwd(), 'invoices');
   return ensureDir(dir);
 }
@@ -102,7 +100,7 @@ export function getInvoicesDir(customPath) {
 /**
  * Get all paths for debugging/info display
  */
-export function getAllPaths() {
+export function getAllPaths(): AllPaths {
   return {
     data: paths.data,
     config: paths.config,
@@ -118,7 +116,7 @@ export function getAllPaths() {
 /**
  * Print all paths (for debugging)
  */
-export function printPaths() {
+export function printPaths(): void {
   const allPaths = getAllPaths();
   console.log('\n📁 Kraxler storage locations:\n');
   console.log(`  Database:  ${allPaths.database}`);

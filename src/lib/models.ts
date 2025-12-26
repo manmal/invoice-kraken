@@ -14,17 +14,84 @@
 
 import { discoverAuthStorage, discoverModels } from '@mariozechner/pi-coding-agent';
 import { loadConfig } from './config.js';
+import { ModelConfig } from '../types.js';
+
+// ============================================================================
+// Type Definitions
+// ============================================================================
+
+export type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+export type TierType = 'fast' | 'balanced' | 'quality';
+export type TaskName = keyof typeof DEFAULT_MODEL_CONFIG;
+export type PresetName = keyof typeof MODEL_PRESETS;
+
+export interface TaskModelConfig {
+  provider: string;
+  modelId: string;
+  description: string;
+  thinkingLevel: ThinkingLevel;
+  tier: TierType;
+}
+
+export interface ModelCandidate {
+  provider: string;
+  modelId: string;
+}
+
+export interface PresetTiers {
+  fast: ModelCandidate[];
+  balanced: ModelCandidate[];
+  quality: ModelCandidate[];
+}
+
+export interface RuntimeOverrides {
+  model: string | null;
+  provider: string | null;
+}
+
+export interface ModelForTaskResult {
+  model: RegistryModel;
+  thinkingLevel: ThinkingLevel;
+  description: string;
+  source: string;
+}
+
+export interface AvailableModel {
+  provider: string;
+  id: string;
+  name: string;
+}
+
+// Registry types from pi-coding-agent
+interface ModelRegistry {
+  find(provider: string, modelId: string): RegistryModel | null;
+  getAvailable(): Promise<AvailableModel[]>;
+}
+
+interface RegistryModel {
+  provider: string;
+  id: string;
+  name?: string;
+}
+
+// ============================================================================
+// Model Registry Cache
+// ============================================================================
 
 // Cache for model registry
-let _modelRegistry = null;
+let _modelRegistry: ModelRegistry | null = null;
 
-function getModelRegistry() {
+function getModelRegistry(): ModelRegistry {
   if (!_modelRegistry) {
     const authStorage = discoverAuthStorage();
-    _modelRegistry = discoverModels(authStorage);
+    _modelRegistry = discoverModels(authStorage) as ModelRegistry;
   }
   return _modelRegistry;
 }
+
+// ============================================================================
+// Default Model Configuration
+// ============================================================================
 
 /**
  * Default model configuration by task
@@ -36,7 +103,7 @@ function getModelRegistry() {
  * - thinkingLevel: Optional thinking level (off, minimal, low, medium, high, xhigh)
  * - tier: Which preset tier this task uses (fast, balanced, quality)
  */
-export const DEFAULT_MODEL_CONFIG = {
+export const DEFAULT_MODEL_CONFIG: Record<string, TaskModelConfig> = {
   // Email invoice classification (batch analysis)
   // Uses fast tier - analyzing many emails quickly
   emailClassification: {
@@ -96,7 +163,11 @@ export const DEFAULT_MODEL_CONFIG = {
     thinkingLevel: 'off',
     tier: 'fast',
   },
-};
+} as const;
+
+// ============================================================================
+// Model Presets
+// ============================================================================
 
 /**
  * Model presets - predefined configurations for common use cases
@@ -104,7 +175,7 @@ export const DEFAULT_MODEL_CONFIG = {
  * Each tier maps to specific models per provider.
  * The first available model from the list is used.
  */
-export const MODEL_PRESETS = {
+export const MODEL_PRESETS: Record<string, PresetTiers> = {
   // Cheap/fast models for all tasks
   cheap: {
     fast: [
@@ -179,8 +250,12 @@ export const MODEL_PRESETS = {
   },
 };
 
+// ============================================================================
+// Runtime Overrides
+// ============================================================================
+
 // Runtime overrides from CLI/env (set via setModelOverrides)
-let _runtimeOverrides = {
+let _runtimeOverrides: RuntimeOverrides = {
   model: null,
   provider: null,
 };
@@ -188,12 +263,8 @@ let _runtimeOverrides = {
 /**
  * Set runtime model overrides from CLI flags or env vars
  * Call this early in command execution
- * 
- * @param {Object} overrides
- * @param {string} [overrides.model] - Model ID override
- * @param {string} [overrides.provider] - Provider override
  */
-export function setModelOverrides(overrides) {
+export function setModelOverrides(overrides: { model?: string; provider?: string }): void {
   _runtimeOverrides = {
     model: overrides.model || process.env.KRAXLER_MODEL || null,
     provider: overrides.provider || process.env.KRAXLER_PROVIDER || null,
@@ -203,19 +274,21 @@ export function setModelOverrides(overrides) {
 /**
  * Get current runtime overrides
  */
-export function getModelOverrides() {
+export function getModelOverrides(): RuntimeOverrides {
   return {
     model: _runtimeOverrides.model || process.env.KRAXLER_MODEL || null,
     provider: _runtimeOverrides.provider || process.env.KRAXLER_PROVIDER || null,
   };
 }
 
+// ============================================================================
+// Model Resolution Functions
+// ============================================================================
+
 /**
  * Find first available model from a list of candidates
- * @param {Array<{provider: string, modelId: string}>} candidates
- * @returns {Object|null} Model object or null
  */
-function findFirstAvailable(candidates) {
+function findFirstAvailable(candidates: ModelCandidate[]): RegistryModel | null {
   const registry = getModelRegistry();
   
   for (const candidate of candidates) {
@@ -229,11 +302,8 @@ function findFirstAvailable(candidates) {
 
 /**
  * Resolve a model by provider and ID
- * @param {string} provider
- * @param {string} modelId
- * @returns {Object|null} Model object or null
  */
-function resolveModel(provider, modelId) {
+function resolveModel(provider: string, modelId: string): RegistryModel | null {
   const registry = getModelRegistry();
   return registry.find(provider, modelId);
 }
@@ -247,11 +317,8 @@ function resolveModel(provider, modelId) {
  * 3. Per-task config in config.json → models[task]
  * 4. Preset from config.json → model_preset
  * 5. Hardcoded defaults
- * 
- * @param {keyof typeof DEFAULT_MODEL_CONFIG} task - The task name
- * @returns {{ model: any, thinkingLevel: string, description: string, source: string } | null}
  */
-export function getModelForTask(task) {
+export function getModelForTask(task: string): ModelForTaskResult | null {
   const defaultConfig = DEFAULT_MODEL_CONFIG[task];
   if (!defaultConfig) {
     console.error(`Unknown task: ${task}`);
@@ -278,25 +345,27 @@ export function getModelForTask(task) {
   
   // 2. Per-task config from config.json
   if (config.models && config.models[task]) {
-    const taskOverride = config.models[task];
+    const taskOverride = config.models[task] as ModelConfig & { thinkingLevel?: ThinkingLevel; model?: string };
     const provider = taskOverride.provider || defaultConfig.provider;
     const modelId = taskOverride.modelId || taskOverride.model; // Support both keys
-    const model = resolveModel(provider, modelId);
-    if (model) {
-      return {
-        model,
-        thinkingLevel: taskOverride.thinkingLevel || defaultConfig.thinkingLevel || 'off',
-        description: defaultConfig.description,
-        source: 'config.json models',
-      };
+    if (modelId) {
+      const model = resolveModel(provider, modelId);
+      if (model) {
+        return {
+          model,
+          thinkingLevel: taskOverride.thinkingLevel || defaultConfig.thinkingLevel || 'off',
+          description: defaultConfig.description,
+          source: 'config.json models',
+        };
+      }
+      console.warn(`Config model '${provider}/${modelId}' for task '${task}' not found, falling back`);
     }
-    console.warn(`Config model '${provider}/${modelId}' for task '${task}' not found, falling back`);
   }
   
   // 3. Preset from config.json
   if (config.model_preset && MODEL_PRESETS[config.model_preset]) {
     const preset = MODEL_PRESETS[config.model_preset];
-    const tier = defaultConfig.tier || 'balanced';
+    const tier: TierType = defaultConfig.tier || 'balanced';
     const candidates = preset[tier] || preset.balanced;
     const model = findFirstAvailable(candidates);
     if (model) {
@@ -329,14 +398,14 @@ export function getModelForTask(task) {
 /**
  * Get all task names
  */
-export function getTaskNames() {
+export function getTaskNames(): string[] {
   return Object.keys(DEFAULT_MODEL_CONFIG);
 }
 
 /**
  * List all configured models and their tasks
  */
-export function listModelConfig() {
+export function listModelConfig(): void {
   const config = loadConfig();
   const overrides = getModelOverrides();
   
@@ -377,7 +446,7 @@ export function listModelConfig() {
 /**
  * List available presets
  */
-export function listPresets() {
+export function listPresets(): void {
   console.log('\n📦 Available Presets\n');
   console.log('Preset      Description');
   console.log('─'.repeat(60));
@@ -390,30 +459,25 @@ export function listPresets() {
 
 /**
  * Validate that a model exists
- * @param {string} provider 
- * @param {string} modelId 
- * @returns {boolean}
  */
-export function validateModel(provider, modelId) {
+export function validateModel(provider: string, modelId: string): boolean {
   const registry = getModelRegistry();
   return registry.find(provider, modelId) !== null;
 }
 
 /**
  * Get available models for a provider
- * @param {string} [providerFilter] - Optional provider to filter by
- * @returns {Array<{provider: string, id: string, name: string}>}
  */
-export async function getAvailableModels(providerFilter = null) {
+export async function getAvailableModels(providerFilter: string | null = null): Promise<AvailableModel[]> {
   const registry = getModelRegistry();
   try {
     const available = await registry.getAvailable();
     if (providerFilter) {
-      return available.filter(m => m.provider.toLowerCase() === providerFilter.toLowerCase());
+      return available.filter((m: AvailableModel) => m.provider.toLowerCase() === providerFilter.toLowerCase());
     }
     return available;
   } catch (error) {
-    console.error('Error fetching available models:', error.message);
+    console.error('Error fetching available models:', (error as Error).message);
     return [];
   }
 }

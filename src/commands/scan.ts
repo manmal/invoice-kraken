@@ -2,6 +2,7 @@
  * Scan command - Scan Gmail for invoice-related emails
  */
 
+import * as process from 'node:process';
 import { checkAccount, searchGmail, buildInvoiceQuery } from '../lib/gog.js';
 import { getDb, insertEmail } from '../lib/db.js';
 import { extractSenderDomain } from '../lib/extract.js';
@@ -13,8 +14,40 @@ import {
   failAction,
   markInterruptedActions 
 } from '../lib/action-log.js';
+import type { ScanOptions, Email } from '../types.js';
 
-export async function scanCommand(options) {
+/** Email data for insertion (subset of Email fields) */
+type EmailInsertData = Pick<Email, 
+  | 'id' 
+  | 'thread_id' 
+  | 'account' 
+  | 'year' 
+  | 'month' 
+  | 'subject' 
+  | 'sender' 
+  | 'sender_domain' 
+  | 'date' 
+  | 'snippet' 
+  | 'labels' 
+  | 'raw_json'
+>;
+
+/** Thread data returned from Gmail search (subset of message properties) */
+interface GmailThreadData {
+  id: string;
+  threadId?: string;
+  from?: string;
+  subject?: string;
+  date?: string;
+  snippet?: string;
+  labelIds?: string[];
+  payload?: {
+    headers?: Array<{ name: string; value: string }>;
+  };
+  internalDate?: string;
+}
+
+export async function scanCommand(options: ScanOptions): Promise<void> {
   const { account } = options;
   
   // Parse date range from options
@@ -22,7 +55,7 @@ export async function scanCommand(options) {
   try {
     dateRange = parseDateRange(options);
   } catch (error) {
-    console.error(`Error: ${error.message}`);
+    console.error(`Error: ${(error as Error).message}`);
     process.exit(1);
   }
   
@@ -71,7 +104,7 @@ export async function scanCommand(options) {
       process.stdout.write(`Scanning ${monthName} ${year}... `);
       
       const query = buildInvoiceQuery(year, month);
-      const emails = await searchGmail(account, query);
+      const emails = await searchGmail(account, query) as unknown as GmailThreadData[];
       
       totalFound += emails.length;
       
@@ -83,18 +116,18 @@ export async function scanCommand(options) {
         const sender = extractSender(email);
         const senderDomain = extractSenderDomain(sender);
         
-        const emailData = {
+        const emailData: EmailInsertData = {
           id: email.id,
-          thread_id: email.threadId,
+          thread_id: email.threadId ?? null,
           account,
           year,
           month,
-          subject: email.subject || extractSubject(email),
+          subject: email.subject ?? extractSubject(email),
           sender,
           sender_domain: senderDomain,
-          date: email.date || extractDate(email),
-          snippet: email.snippet,
-          labels: JSON.stringify(email.labelIds || []),
+          date: email.date ?? extractDate(email),
+          snippet: email.snippet ?? null,
+          labels: JSON.stringify(email.labelIds ?? []),
           raw_json: JSON.stringify(email),
         };
         
@@ -134,7 +167,7 @@ export async function scanCommand(options) {
     console.log(`\nRun "kraxler extract -a ${account}" to analyze the emails.`);
     
   } catch (error) {
-    failAction(actionId, error, {
+    failAction(actionId, error as Error, {
       emailsFound: totalFound,
       emailsNew: totalNew,
     });
@@ -145,13 +178,13 @@ export async function scanCommand(options) {
 /**
  * Extract sender from email object
  */
-function extractSender(email) {
+function extractSender(email: GmailThreadData): string {
   if (email.from) return email.from;
   
   // Try to extract from headers
   if (email.payload?.headers) {
     const fromHeader = email.payload.headers.find(
-      h => h.name.toLowerCase() === 'from'
+      (h) => h.name.toLowerCase() === 'from'
     );
     if (fromHeader) return fromHeader.value;
   }
@@ -162,13 +195,13 @@ function extractSender(email) {
 /**
  * Extract subject from email object
  */
-function extractSubject(email) {
+function extractSubject(email: GmailThreadData): string {
   if (email.subject) return email.subject;
   
   // Try to extract from headers
   if (email.payload?.headers) {
     const subjectHeader = email.payload.headers.find(
-      h => h.name.toLowerCase() === 'subject'
+      (h) => h.name.toLowerCase() === 'subject'
     );
     if (subjectHeader) return subjectHeader.value;
   }
@@ -179,13 +212,13 @@ function extractSubject(email) {
 /**
  * Extract date from email object
  */
-function extractDate(email) {
+function extractDate(email: GmailThreadData): string {
   if (email.date) return email.date;
   
   // Try to extract from headers
   if (email.payload?.headers) {
     const dateHeader = email.payload.headers.find(
-      h => h.name.toLowerCase() === 'date'
+      (h) => h.name.toLowerCase() === 'date'
     );
     if (dateHeader) return dateHeader.value;
   }

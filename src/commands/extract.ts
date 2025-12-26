@@ -2,27 +2,96 @@
  * Investigate command - Analyze found emails and classify invoices
  */
 
-import fs from 'fs';
-import path from 'path';
+import * as path from 'path';
 import { 
-  getDb, 
   getEmailsByStatus, 
   updateEmailStatus,
   findDuplicateByInvoiceNumber,
-  findDuplicateByHash,
   findDuplicateByFuzzyMatch,
 } from '../lib/db.js';
 import { prefilterEmails } from '../lib/prefilter.js';
 import { getMessage, downloadAttachment } from '../lib/gog.js';
 import { analyzeEmailsForInvoices, checkAuth } from '../lib/ai.js';
-import { extractInvoiceData, parseAmountToCents } from '../lib/extract.js';
+import { parseAmountToCents } from '../lib/extract.js';
 import { classifyDeductibility } from '../lib/vendors.js';
 import { generatePdfFromText, generatePdfFromEmailHtml } from '../lib/pdf.js';
 import { hashFile } from '../utils/hash.js';
-import { getInvoiceOutputPath, getInvoicesDir, ensureDir } from '../utils/paths.js';
+import { getInvoiceOutputPath } from '../utils/paths.js';
 import { emptyUsage, addUsage, formatUsageReport } from '../lib/tokens.js';
+import type { Usage, PhaseUsageReport } from '../lib/tokens.js';
+import type { 
+  Email, 
+  ExtractOptions, 
+  GmailMessage,
+  GmailPayload,
+  DeductibleCategory,
+} from '../types.js';
 
-export async function extractCommand(options) {
+interface ExtractStats {
+  invoices: number;
+  noInvoice: number;
+  duplicates: number;
+  downloaded: number;
+  pendingDownload: number;
+  manual: number;
+  errors: number;
+}
+
+interface EmailAnalysis {
+  id?: string;
+  has_invoice?: boolean;
+  invoice_type?: string;
+  invoice_number?: string | null;
+  amount?: string | null;
+  invoice_date?: string | null;
+  vendor_product?: string | null;
+  notes?: string | null;
+  deductible?: DeductibleCategory | 'unclear';
+  deductible_reason?: string;
+  deductible_percent?: number;
+  income_tax_percent?: number;
+  vat_recoverable?: boolean;
+}
+
+interface DuplicateCheckResult {
+  isDuplicate: boolean;
+  originalId?: string;
+  confidence?: 'exact' | 'high' | 'medium' | 'low';
+}
+
+interface ProcessOptions {
+  autoDedup: boolean;
+  strict: boolean;
+}
+
+interface ExtraData {
+  deductible: DeductibleCategory | 'unclear' | undefined;
+  deductible_reason: string | undefined;
+  income_tax_percent: number | null | undefined;
+  vat_recoverable: number;
+  invoice_amount_cents: number | null;
+}
+
+interface EmailContent {
+  text: string | null;
+  html: string | null;
+}
+
+interface PdfAttachmentInfo {
+  filename: string;
+  attachmentId: string | undefined;
+  mimeType: string | undefined;
+}
+
+interface PdfMetadata {
+  subject?: string;
+  sender?: string;
+  date?: string;
+  invoiceNumber?: string;
+  amount?: string;
+}
+
+export async function extractCommand(options: ExtractOptions): Promise<void> {
   const { account, batchSize = 10, autoDedup = false, strict = false } = options;
   
   console.log(`Investigating emails for account: ${account}`);
@@ -36,7 +105,6 @@ export async function extractCommand(options) {
   }
   
   // Get pending emails
-  const db = getDb();
   const pendingEmails = getEmailsByStatus(account, 'pending', 1000);
   
   if (pendingEmails.length === 0) {
@@ -65,12 +133,12 @@ export async function extractCommand(options) {
   }
   
   // Process in batches
-  const batches = [];
+  const batches: Email[][] = [];
   for (let i = 0; i < toAnalyze.length; i += batchSize) {
     batches.push(toAnalyze.slice(i, i + batchSize));
   }
   
-  let stats = {
+  const stats: ExtractStats = {
     invoices: 0,
     noInvoice: 0,
     duplicates: 0,
@@ -81,7 +149,7 @@ export async function extractCommand(options) {
   };
   
   // Track token usage per phase
-  const usageByPhase = [];
+  const usageByPhase: PhaseUsageReport[] = [];
   
   let batchNum = 0;
   for (const batch of batches) {
@@ -100,12 +168,12 @@ export async function extractCommand(options) {
       usageByPhase.push(classificationPhase);
     }
     classificationPhase.calls += 1;
-    addUsage(classificationPhase.usage, usage);
+    addUsage(classificationPhase.usage, usage as Partial<Usage>);
     
     // Process each email
     for (let i = 0; i < batch.length; i++) {
       const email = batch[i];
-      const analysis = analyses.find(a => a.id === email.id) || analyses[i] || {};
+      const analysis: EmailAnalysis = (analyses as EmailAnalysis[]).find((a: EmailAnalysis) => a.id === email.id) || (analyses as EmailAnalysis[])[i] || {};
       
       await processEmail(email, analysis, account, { autoDedup, strict }, stats);
     }
@@ -136,7 +204,13 @@ export async function extractCommand(options) {
   }
 }
 
-async function processEmail(email, analysis, account, options, stats) {
+async function processEmail(
+  email: Email, 
+  analysis: EmailAnalysis, 
+  account: string, 
+  options: ProcessOptions, 
+  stats: ExtractStats
+): Promise<void> {
   const { autoDedup, strict } = options;
   
   try {
@@ -153,17 +227,17 @@ async function processEmail(email, analysis, account, options, stats) {
     stats.invoices++;
     
     // Get deductibility (from AI or fallback to vendor DB)
-    let deductible = analysis.deductible;
-    let deductibleReason = analysis.deductible_reason;
-    let incomeTaxPercent = analysis.income_tax_percent;
-    let vatRecoverable = analysis.vat_recoverable;
+    let deductible: DeductibleCategory | 'unclear' | undefined = analysis.deductible;
+    let deductibleReason: string | undefined = analysis.deductible_reason;
+    let incomeTaxPercent: number | null | undefined = analysis.income_tax_percent;
+    let vatRecoverable: boolean | null | undefined = analysis.vat_recoverable;
     
     // Fallback to vendor DB if AI didn't provide clear classification
     if (!deductible || deductible === 'unclear') {
       const vendorClassification = classifyDeductibility(
         email.sender_domain,
-        email.subject,
-        email.snippet
+        email.subject ?? '',
+        email.snippet ?? ''
       );
       deductible = vendorClassification.deductible;
       deductibleReason = vendorClassification.reason;
@@ -177,7 +251,7 @@ async function processEmail(email, analysis, account, options, stats) {
     }
     
     // Parse amount
-    const amountCents = analysis.amount ? parseAmountToCents(analysis.amount) : null;
+    const amountCents: number | null = analysis.amount ? parseAmountToCents(analysis.amount) : null;
     
     // Check for duplicates
     const dupCheck = await checkForDuplicate(email, analysis, account, { autoDedup, strict });
@@ -192,7 +266,6 @@ async function processEmail(email, analysis, account, options, stats) {
         invoice_date: analysis.invoice_date,
         deductible,
         deductible_reason: deductibleReason,
-        deductible_percent: deductiblePercent,
       });
       console.log(`  ⊘ ${truncate(email.subject, 50)} - Duplicate (${dupCheck.confidence})`);
       stats.duplicates++;
@@ -200,7 +273,7 @@ async function processEmail(email, analysis, account, options, stats) {
     }
     
     // Common extra data for all handlers
-    const extraData = {
+    const extraData: ExtraData = {
       deductible,
       deductible_reason: deductibleReason,
       income_tax_percent: incomeTaxPercent,
@@ -210,11 +283,11 @@ async function processEmail(email, analysis, account, options, stats) {
     
     // IMPORTANT: Always check for PDF attachments first, regardless of AI classification
     // The AI sometimes misclassifies pdf_attachment as text
-    const fullMessage = await getMessage(account, email.id);
-    const pdfAttachment = fullMessage ? findPdfAttachment(fullMessage) : null;
+    const fullMessage: GmailMessage | null = await getMessage(account, email.id);
+    const pdfAttachment: PdfAttachmentInfo | null = fullMessage ? findPdfAttachment(fullMessage) : null;
     
     // Determine actual invoice type - prioritize PDF attachment if found
-    let invoiceType = analysis.invoice_type || 'unknown';
+    let invoiceType: string = analysis.invoice_type || 'unknown';
     if (pdfAttachment && invoiceType !== 'pdf_attachment') {
       console.log(`    (Correcting type: ${invoiceType} → pdf_attachment, found: ${pdfAttachment.filename})`);
       invoiceType = 'pdf_attachment';
@@ -250,19 +323,28 @@ async function processEmail(email, analysis, account, options, stats) {
       stats.manual++;
     }
   } catch (error) {
-    console.error(`  ✗ Error processing ${email.id}: ${error.message}`);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`  ✗ Error processing ${email.id}: ${errorMessage}`);
     updateEmailStatus(email.id, account, 'manual', {
-      notes: `Error: ${error.message}`,
+      notes: `Error: ${errorMessage}`,
     });
     stats.errors++;
   }
 }
 
-async function handlePdfAttachment(email, analysis, account, stats, extra, preloadedMessage = null, preloadedAttachment = null) {
+async function handlePdfAttachment(
+  email: Email, 
+  analysis: EmailAnalysis, 
+  account: string, 
+  stats: ExtractStats, 
+  extra: ExtraData, 
+  preloadedMessage: GmailMessage | null = null, 
+  preloadedAttachment: PdfAttachmentInfo | null = null
+): Promise<void> {
   const { deductible, deductible_reason, income_tax_percent, vat_recoverable, invoice_amount_cents } = extra;
   
   // Use pre-loaded message if available, otherwise fetch
-  const fullMessage = preloadedMessage || await getMessage(account, email.id);
+  const fullMessage: GmailMessage | null = preloadedMessage || await getMessage(account, email.id);
   
   if (!fullMessage) {
     updateEmailStatus(email.id, account, 'manual', {
@@ -276,7 +358,7 @@ async function handlePdfAttachment(email, analysis, account, stats, extra, prelo
   }
   
   // Use pre-loaded attachment if available, otherwise find it
-  const attachment = preloadedAttachment || findPdfAttachment(fullMessage);
+  const attachment: PdfAttachmentInfo | null = preloadedAttachment || findPdfAttachment(fullMessage);
   
   if (!attachment) {
     updateEmailStatus(email.id, account, 'manual', {
@@ -290,16 +372,16 @@ async function handlePdfAttachment(email, analysis, account, stats, extra, prelo
   }
   
   // Download attachment
-  const outputPath = getInvoiceOutputPath(
+  const outputPath: string = getInvoiceOutputPath(
     analysis.invoice_date || email.date,
     analysis.vendor_product || email.sender_domain || email.sender,
-    analysis.invoice_number
+    analysis.invoice_number ?? null
   );
   
-  const success = await downloadAttachment(
+  const success: boolean = await downloadAttachment(
     account,
     email.id,
-    attachment.attachmentId,
+    attachment.attachmentId!,
     outputPath
   );
   
@@ -315,7 +397,7 @@ async function handlePdfAttachment(email, analysis, account, stats, extra, prelo
   }
   
   // Hash the downloaded file
-  const fileHash = hashFile(outputPath);
+  const fileHash: string = hashFile(outputPath);
   
   updateEmailStatus(email.id, account, 'downloaded', {
     invoice_type: 'pdf_attachment',
@@ -332,18 +414,25 @@ async function handlePdfAttachment(email, analysis, account, stats, extra, prelo
     vat_recoverable,
   });
   
-  const relativePath = path.relative(process.cwd(), outputPath);
+  const relativePath: string = path.relative(process.cwd(), outputPath);
   console.log(`  ✓ ${truncate(email.subject, 50)}`);
   console.log(`    → ${relativePath}`);
-  printDeductibility(deductible, deductible_reason, income_tax_percent, vat_recoverable);
+  printDeductibility(deductible, deductible_reason, income_tax_percent, vat_recoverable ? true : false);
   stats.downloaded++;
 }
 
-async function handleTextInvoice(email, analysis, account, stats, extra, preloadedMessage = null) {
+async function handleTextInvoice(
+  email: Email, 
+  analysis: EmailAnalysis, 
+  account: string, 
+  stats: ExtractStats, 
+  extra: ExtraData, 
+  preloadedMessage: GmailMessage | null = null
+): Promise<void> {
   const { deductible, deductible_reason, income_tax_percent, vat_recoverable, invoice_amount_cents } = extra;
   
   // Use pre-loaded message if available, otherwise fetch
-  const fullMessage = preloadedMessage || await getMessage(account, email.id);
+  const fullMessage: GmailMessage | null = preloadedMessage || await getMessage(account, email.id);
   
   if (!fullMessage) {
     updateEmailStatus(email.id, account, 'manual', {
@@ -357,7 +446,7 @@ async function handleTextInvoice(email, analysis, account, stats, extra, preload
   }
   
   // Check if email has HTML content - prefer rendering HTML for better formatting
-  const emailContent = extractEmailContent(fullMessage);
+  const emailContent: EmailContent = extractEmailContent(fullMessage);
   
   if (!emailContent.text && !emailContent.html) {
     updateEmailStatus(email.id, account, 'manual', {
@@ -371,18 +460,18 @@ async function handleTextInvoice(email, analysis, account, stats, extra, preload
   }
   
   // Generate PDF
-  const outputPath = getInvoiceOutputPath(
+  const outputPath: string = getInvoiceOutputPath(
     analysis.invoice_date || email.date,
     analysis.vendor_product || email.sender_domain || email.sender,
-    analysis.invoice_number
+    analysis.invoice_number ?? null
   );
   
-  const metadata = {
-    subject: email.subject,
-    sender: email.sender,
-    date: email.date,
-    invoiceNumber: analysis.invoice_number,
-    amount: analysis.amount,
+  const metadata: PdfMetadata = {
+    subject: email.subject ?? undefined,
+    sender: email.sender ?? undefined,
+    date: email.date ?? undefined,
+    invoiceNumber: analysis.invoice_number ?? undefined,
+    amount: analysis.amount ?? undefined,
   };
   
   // Use HTML rendering if we have HTML content (better formatting for receipts)
@@ -390,14 +479,16 @@ async function handleTextInvoice(email, analysis, account, stats, extra, preload
   if (emailContent.html) {
     await generatePdfFromEmailHtml(emailContent.html, metadata, outputPath);
   } else {
-    await generatePdfFromText(emailContent.text, metadata, outputPath);
+    await generatePdfFromText(emailContent.text!, metadata, outputPath);
   }
   
   // Hash the generated file
-  let fileHash = null;
+  let fileHash: string | null = null;
   try {
     fileHash = hashFile(outputPath);
-  } catch {}
+  } catch {
+    // Ignore hash errors
+  }
   
   updateEmailStatus(email.id, account, 'downloaded', {
     invoice_type: 'text',
@@ -414,22 +505,26 @@ async function handleTextInvoice(email, analysis, account, stats, extra, preload
     vat_recoverable,
   });
   
-  const relativePath = path.relative(process.cwd(), outputPath);
+  const relativePath: string = path.relative(process.cwd(), outputPath);
   console.log(`  ✓ ${truncate(email.subject, 50)}`);
   console.log(`    → ${relativePath}`);
-  printDeductibility(deductible, deductible_reason, income_tax_percent, vat_recoverable);
+  printDeductibility(deductible, deductible_reason, income_tax_percent, vat_recoverable ? true : false);
   stats.downloaded++;
 }
 
-async function checkForDuplicate(email, analysis, account, options) {
+async function checkForDuplicate(
+  email: Email, 
+  analysis: EmailAnalysis, 
+  account: string, 
+  options: ProcessOptions
+): Promise<DuplicateCheckResult> {
   const { autoDedup, strict } = options;
-  const db = getDb();
   
   // Check by invoice number
   if (analysis.invoice_number) {
     const existing = findDuplicateByInvoiceNumber(
       analysis.invoice_number,
-      email.sender_domain,
+      email.sender_domain ?? '',
       email.id,
       account
     );
@@ -441,14 +536,14 @@ async function checkForDuplicate(email, analysis, account, options) {
   // Check by amount + date (fuzzy)
   if (analysis.amount && analysis.invoice_date && (autoDedup || strict)) {
     const existing = findDuplicateByFuzzyMatch(
-      email.sender_domain,
+      email.sender_domain ?? '',
       analysis.amount,
       analysis.invoice_date,
       email.id,
       account
     );
     if (existing) {
-      const confidence = strict ? 'high' : 'medium';
+      const confidence: 'high' | 'medium' = strict ? 'high' : 'medium';
       if (autoDedup) {
         return { isDuplicate: true, originalId: existing.id, confidence };
       }
@@ -458,8 +553,8 @@ async function checkForDuplicate(email, analysis, account, options) {
   return { isDuplicate: false };
 }
 
-function findPdfAttachment(message) {
-  const parts = message.payload?.parts || [];
+function findPdfAttachment(message: GmailMessage): PdfAttachmentInfo | null {
+  const parts: GmailPayload[] = message.payload?.parts || [];
   
   for (const part of parts) {
     if (part.filename && part.filename.toLowerCase().endsWith('.pdf')) {
@@ -491,10 +586,10 @@ function findPdfAttachment(message) {
  * Extract both text and HTML content from email message
  * Returns { text: string|null, html: string|null }
  */
-function extractEmailContent(message) {
-  const parts = message.payload?.parts || [];
-  let text = null;
-  let html = null;
+function extractEmailContent(message: GmailMessage): EmailContent {
+  const parts: GmailPayload[] = message.payload?.parts || [];
+  let text: string | null = null;
+  let html: string | null = null;
   
   // Look for text/plain and text/html parts
   for (const part of parts) {
@@ -519,7 +614,7 @@ function extractEmailContent(message) {
   
   // Try body directly (single-part email)
   if (!text && !html && message.payload?.body?.data) {
-    const content = Buffer.from(message.payload.body.data, 'base64').toString('utf-8');
+    const content: string = Buffer.from(message.payload.body.data, 'base64').toString('utf-8');
     // Check if it's HTML
     if (content.trim().startsWith('<') || /<html|<body|<div|<table/i.test(content)) {
       html = content;
@@ -537,24 +632,9 @@ function extractEmailContent(message) {
 }
 
 /**
- * Extract text content only (legacy function, now uses extractEmailContent)
- */
-function extractTextContent(message) {
-  const { text, html } = extractEmailContent(message);
-  
-  // Prefer plain text
-  if (text) return text;
-  
-  // Convert HTML to text as fallback
-  if (html) return htmlToText(html);
-  
-  return null;
-}
-
-/**
  * Convert HTML to plain text, properly stripping CSS and scripts
  */
-function htmlToText(html) {
+function htmlToText(html: string): string {
   return html
     // Remove style blocks (handles <style>, <style type="...">, etc.)
     .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '')
@@ -580,8 +660,8 @@ function htmlToText(html) {
     .replace(/&quot;/gi, '"')
     .replace(/&#39;/gi, "'")
     .replace(/&euro;/gi, '€')
-    .replace(/&#\d+;/g, (match) => {
-      const code = parseInt(match.slice(2, -1), 10);
+    .replace(/&#\d+;/g, (match: string): string => {
+      const code: number = parseInt(match.slice(2, -1), 10);
       return String.fromCharCode(code);
     })
     // Clean up whitespace
@@ -591,8 +671,13 @@ function htmlToText(html) {
     .trim();
 }
 
-function printDeductibility(deductible, reason, incomeTaxPercent, vatRecoverable) {
-  const icons = {
+function printDeductibility(
+  deductible: DeductibleCategory | 'unclear' | undefined, 
+  reason: string | undefined, 
+  incomeTaxPercent: number | null | undefined, 
+  vatRecoverable: boolean | null | undefined
+): void {
+  const icons: Record<string, string> = {
     full: '💼',
     vehicle: '🚗',
     meals: '🍽️',
@@ -601,12 +686,12 @@ function printDeductibility(deductible, reason, incomeTaxPercent, vatRecoverable
     none: '🚫',
     unclear: '❓',
   };
-  const icon = icons[deductible] || '❓';
+  const icon: string = (deductible && icons[deductible]) || '❓';
   
-  let details = capitalize(deductible);
+  let details: string = capitalize(deductible || 'unclear');
   
   // Show income tax percentage if not 100%
-  if (incomeTaxPercent !== null && incomeTaxPercent !== 100) {
+  if (incomeTaxPercent !== null && incomeTaxPercent !== undefined && incomeTaxPercent !== 100) {
     details += ` (${incomeTaxPercent}% EST)`;
   }
   
@@ -617,14 +702,17 @@ function printDeductibility(deductible, reason, incomeTaxPercent, vatRecoverable
     details += ' (100% VAT)';
   }
   
-  console.log(`    ${icon} ${details}: ${reason}`);
+  console.log(`    ${icon} ${details}: ${reason || 'No reason provided'}`);
 }
 
-function truncate(str, len) {
+function truncate(str: string | null, len: number): string {
   if (!str) return '';
   return str.length > len ? str.substring(0, len - 3) + '...' : str;
 }
 
-function capitalize(str) {
+function capitalize(str: string | undefined): string {
   return str ? str.charAt(0).toUpperCase() + str.slice(1) : '';
 }
+
+// Keep htmlToText available for potential future use
+void htmlToText;

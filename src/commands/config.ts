@@ -3,7 +3,6 @@
  */
 
 import { 
-  loadConfig, 
   updateConfig, 
   runSetupWizard, 
   printConfig,
@@ -16,12 +15,24 @@ import {
   getAvailableModels,
   listPresets,
 } from '../lib/models.js';
-import readline from 'readline';
+import * as readline from 'readline';
+
+interface ChoiceOption<T> {
+  label: string;
+  value: T;
+}
+
+interface ConfigCommandOptions {
+  reset?: boolean;
+  show?: boolean;
+  set?: string;
+  models?: boolean;
+}
 
 /**
  * Create readline interface for prompts
  */
-function createPrompt() {
+function createPrompt(): readline.Interface {
   return readline.createInterface({
     input: process.stdin,
     output: process.stdout,
@@ -31,14 +42,14 @@ function createPrompt() {
 /**
  * Ask a choice question with arrow key navigation (simple version)
  */
-async function askChoice(rl, question, options) {
+async function askChoice<T>(rl: readline.Interface, question: string, options: ChoiceOption<T>[]): Promise<T> {
   console.log(`\n${question}`);
   options.forEach((opt, i) => {
     console.log(`  ${i + 1}) ${opt.label}`);
   });
   
   return new Promise((resolve) => {
-    rl.question(`Enter choice (1-${options.length}): `, (answer) => {
+    rl.question(`Enter choice (1-${options.length}): `, (answer: string) => {
       const idx = parseInt(answer, 10) - 1;
       if (idx >= 0 && idx < options.length) {
         resolve(options[idx].value);
@@ -52,9 +63,8 @@ async function askChoice(rl, question, options) {
 /**
  * Interactive model configuration
  */
-async function configureModels() {
+async function configureModels(): Promise<void> {
   const rl = createPrompt();
-  const config = loadConfig();
   
   console.log(`
 ╔════════════════════════════════════════════════════════════════════════════╗
@@ -81,7 +91,7 @@ async function configureModels() {
   }
   
   // Group by provider
-  const byProvider = {};
+  const byProvider: Record<string, string[]> = {};
   for (const m of available) {
     if (!byProvider[m.provider]) byProvider[m.provider] = [];
     byProvider[m.provider].push(m.id);
@@ -116,18 +126,18 @@ async function configureModels() {
       { label: 'local - Local models via Ollama (requires Ollama setup)', value: 'local' },
     ]);
     
-    updateConfig({ model_preset: preset, models: null });
+    updateConfig({ model_preset: preset, models: undefined });
     console.log(`\n✓ Model preset set to: ${preset}`);
   } else {
     // Per-task configuration
     const tasks = getTaskNames();
-    const models = {};
+    const models: Record<string, { provider: string; modelId: string }> = {};
     
     console.log('\nConfigure each task (press Enter to use default):\n');
     
     for (const task of tasks) {
-      const answer = await new Promise((resolve) => {
-        rl.question(`${task} [default]: `, (ans) => resolve(ans.trim()));
+      const answer: string = await new Promise((resolve) => {
+        rl.question(`${task} [default]: `, (ans: string) => resolve(ans.trim()));
       });
       
       if (answer) {
@@ -149,7 +159,7 @@ async function configureModels() {
     }
     
     if (Object.keys(models).length > 0) {
-      updateConfig({ models, model_preset: null });
+      updateConfig({ models, model_preset: undefined });
       console.log(`\n✓ Custom model configuration saved.`);
     } else {
       console.log(`\nNo changes made.`);
@@ -160,8 +170,8 @@ async function configureModels() {
   console.log('\nRun `npx kraxler models` to see current configuration.\n');
 }
 
-export async function configCommand(options) {
-  const { reset, show, set, models: configModels } = options;
+export async function configCommand(options: ConfigCommandOptions): Promise<void> {
+  const { reset, show: _show, set, models: configModels } = options;
   
   // Reset config and run setup again
   if (reset) {
@@ -202,15 +212,15 @@ export async function configCommand(options) {
         console.error('Valid presets: cheap, balanced, quality, local');
         process.exit(1);
       }
-      updateConfig({ model_preset: value, models: null }); // Clear per-task when setting preset
+      updateConfig({ model_preset: value, models: undefined }); // Clear per-task when setting preset
       console.log(`✓ Set ${key} = ${value}`);
       return;
     }
     
-    let parsedValue = value;
+    let parsedValue: string | boolean | number = value;
     if (value === 'true') parsedValue = true;
     else if (value === 'false') parsedValue = false;
-    else if (!isNaN(value)) parsedValue = parseInt(value, 10);
+    else if (!isNaN(Number(value))) parsedValue = parseInt(value, 10);
     
     updateConfig({ [key]: parsedValue });
     console.log(`✓ Set ${key} = ${parsedValue}`);

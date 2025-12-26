@@ -12,17 +12,66 @@
  * See: docs/austrian-tax-deductibility.md for details
  */
 
+import { DeductibleCategory } from '../types.js';
 import { 
   getVehicleVatRecovery, 
   getTelecomBusinessPercent, 
-  isKleinunternehmer,
-  loadConfig 
+  isKleinunternehmer
 } from './config.js';
+
+/**
+ * Deductibility type definition
+ */
+interface DeductibilityType {
+  income_tax_percent: number | null;
+  vat_recoverable: boolean | null;
+  icon: string;
+  label: string;
+}
+
+/**
+ * Vendor definition with domain matching
+ */
+interface VendorDomain {
+  domain: string;
+  name: string;
+  category: string;
+  percent?: number;
+}
+
+/**
+ * Vendor definition with pattern matching
+ */
+interface VendorPattern {
+  pattern: RegExp;
+  name?: string;
+  category: string;
+  percent?: number;
+}
+
+/**
+ * Union type for vendor definitions
+ */
+type Vendor = VendorDomain | VendorPattern;
+
+/**
+ * Type guard for domain-based vendors
+ */
+function isDomainVendor(vendor: Vendor): vendor is VendorDomain {
+  return 'domain' in vendor;
+}
+
+/**
+ * Type guard for pattern-based vendors
+ */
+function isPatternVendor(vendor: Vendor): vendor is VendorPattern {
+  return 'pattern' in vendor;
+}
 
 /**
  * Deductibility types with Austrian tax rules
  */
-export const DEDUCTIBILITY_TYPES = {
+export const DEDUCTIBILITY_TYPES: Record<DeductibleCategory, DeductibilityType> = {
   // 100% income tax + 100% VAT recovery
   full: {
     income_tax_percent: 100,
@@ -55,6 +104,14 @@ export const DEDUCTIBILITY_TYPES = {
     label: 'Telecom (partial)',
   },
   
+  // Partial deductibility
+  partial: {
+    income_tax_percent: 50,
+    vat_recoverable: true,
+    icon: '📊',
+    label: 'Partial',
+  },
+  
   // Not deductible (personal expenses)
   none: {
     income_tax_percent: 0,
@@ -72,7 +129,10 @@ export const DEDUCTIBILITY_TYPES = {
   },
 };
 
-export const KNOWN_VENDORS = {
+/**
+ * Known vendors database organized by deductibility category
+ */
+export const KNOWN_VENDORS: Record<'full' | 'vehicle' | 'meals' | 'telecom' | 'none' | 'unclear', Vendor[]> = {
   // Fully deductible (100% income tax + VAT recovery)
   full: [
     // Software & SaaS
@@ -322,12 +382,27 @@ export const KNOWN_VENDORS = {
 };
 
 /**
+ * Internal result type for classifyDeductibility that includes type info
+ */
+interface ClassificationResult {
+  deductible: DeductibleCategory;
+  type: DeductibilityType;
+  reason: string;
+  income_tax_percent: number | null;
+  vat_recoverable: boolean | null;
+}
+
+/**
  * Classify deductibility based on sender domain and subject
  * Returns detailed Austrian tax classification
  * Uses user config for vehicle VAT and telecom percentages
  */
-export function classifyDeductibility(senderDomain, subject = '', body = '') {
-  const textToCheck = `${senderDomain} ${subject} ${body}`.toLowerCase();
+export function classifyDeductibility(
+  senderDomain: string | null | undefined,
+  subject: string = '',
+  body: string = ''
+): ClassificationResult {
+  const textToCheck = `${senderDomain || ''} ${subject} ${body}`.toLowerCase();
   
   // Check if user is Kleinunternehmer (no VAT recovery at all)
   const kleinunternehmer = isKleinunternehmer();
@@ -337,7 +412,7 @@ export function classifyDeductibility(senderDomain, subject = '', body = '') {
   
   // Check vehicle expenses first
   for (const vendor of KNOWN_VENDORS.vehicle) {
-    if (vendor.domain && senderDomain?.includes(vendor.domain)) {
+    if (isDomainVendor(vendor) && senderDomain?.includes(vendor.domain)) {
       return {
         deductible: 'vehicle',
         type: DEDUCTIBILITY_TYPES.vehicle,
@@ -346,7 +421,7 @@ export function classifyDeductibility(senderDomain, subject = '', body = '') {
         vat_recoverable: kleinunternehmer ? false : (vehicleVat.recoverable === true),
       };
     }
-    if (vendor.pattern && vendor.pattern.test(textToCheck)) {
+    if (isPatternVendor(vendor) && vendor.pattern.test(textToCheck)) {
       return {
         deductible: 'vehicle',
         type: DEDUCTIBILITY_TYPES.vehicle,
@@ -359,7 +434,7 @@ export function classifyDeductibility(senderDomain, subject = '', body = '') {
   
   // Check business meals (50% income tax, 100% VAT - unless Kleinunternehmer)
   for (const vendor of KNOWN_VENDORS.meals) {
-    if (vendor.domain && senderDomain?.includes(vendor.domain)) {
+    if (isDomainVendor(vendor) && senderDomain?.includes(vendor.domain)) {
       return {
         deductible: 'meals',
         type: DEDUCTIBILITY_TYPES.meals,
@@ -368,7 +443,7 @@ export function classifyDeductibility(senderDomain, subject = '', body = '') {
         vat_recoverable: kleinunternehmer ? false : true,
       };
     }
-    if (vendor.pattern && vendor.pattern.test(textToCheck)) {
+    if (isPatternVendor(vendor) && vendor.pattern.test(textToCheck)) {
       return {
         deductible: 'meals',
         type: DEDUCTIBILITY_TYPES.meals,
@@ -381,7 +456,7 @@ export function classifyDeductibility(senderDomain, subject = '', body = '') {
   
   // Check full deductibility (100% income tax + VAT - unless Kleinunternehmer)
   for (const vendor of KNOWN_VENDORS.full) {
-    if (vendor.domain && senderDomain?.includes(vendor.domain)) {
+    if (isDomainVendor(vendor) && senderDomain?.includes(vendor.domain)) {
       return {
         deductible: 'full',
         type: DEDUCTIBILITY_TYPES.full,
@@ -390,7 +465,7 @@ export function classifyDeductibility(senderDomain, subject = '', body = '') {
         vat_recoverable: kleinunternehmer ? false : true,
       };
     }
-    if (vendor.pattern && vendor.pattern.test(textToCheck)) {
+    if (isPatternVendor(vendor) && vendor.pattern.test(textToCheck)) {
       return {
         deductible: 'full',
         type: DEDUCTIBILITY_TYPES.full,
@@ -405,7 +480,7 @@ export function classifyDeductibility(senderDomain, subject = '', body = '') {
   const telecomPercent = getTelecomBusinessPercent();
   
   for (const vendor of KNOWN_VENDORS.telecom) {
-    if (vendor.domain && senderDomain?.includes(vendor.domain)) {
+    if (isDomainVendor(vendor) && senderDomain?.includes(vendor.domain)) {
       return {
         deductible: 'telecom',
         type: DEDUCTIBILITY_TYPES.telecom,
@@ -414,7 +489,7 @@ export function classifyDeductibility(senderDomain, subject = '', body = '') {
         vat_recoverable: kleinunternehmer ? false : true,
       };
     }
-    if (vendor.pattern && vendor.pattern.test(textToCheck)) {
+    if (isPatternVendor(vendor) && vendor.pattern.test(textToCheck)) {
       return {
         deductible: 'telecom',
         type: DEDUCTIBILITY_TYPES.telecom,
@@ -427,7 +502,7 @@ export function classifyDeductibility(senderDomain, subject = '', body = '') {
   
   // Check non-deductible
   for (const vendor of KNOWN_VENDORS.none) {
-    if (vendor.domain && senderDomain?.includes(vendor.domain)) {
+    if (isDomainVendor(vendor) && senderDomain?.includes(vendor.domain)) {
       return {
         deductible: 'none',
         type: DEDUCTIBILITY_TYPES.none,
@@ -436,7 +511,7 @@ export function classifyDeductibility(senderDomain, subject = '', body = '') {
         vat_recoverable: false,
       };
     }
-    if (vendor.pattern && vendor.pattern.test(textToCheck)) {
+    if (isPatternVendor(vendor) && vendor.pattern.test(textToCheck)) {
       return {
         deductible: 'none',
         type: DEDUCTIBILITY_TYPES.none,
@@ -449,7 +524,7 @@ export function classifyDeductibility(senderDomain, subject = '', body = '') {
   
   // Check unclear
   for (const vendor of KNOWN_VENDORS.unclear) {
-    if (vendor.domain && senderDomain?.includes(vendor.domain)) {
+    if (isDomainVendor(vendor) && senderDomain?.includes(vendor.domain)) {
       return {
         deductible: 'unclear',
         type: DEDUCTIBILITY_TYPES.unclear,
@@ -458,7 +533,7 @@ export function classifyDeductibility(senderDomain, subject = '', body = '') {
         vat_recoverable: null,
       };
     }
-    if (vendor.pattern && vendor.pattern.test(textToCheck)) {
+    if (isPatternVendor(vendor) && vendor.pattern.test(textToCheck)) {
       return {
         deductible: 'unclear',
         type: DEDUCTIBILITY_TYPES.unclear,
@@ -482,13 +557,13 @@ export function classifyDeductibility(senderDomain, subject = '', body = '') {
 /**
  * Get deductibility icon for display
  */
-export function getDeductibilityIcon(deductible) {
+export function getDeductibilityIcon(deductible: DeductibleCategory): string {
   return DEDUCTIBILITY_TYPES[deductible]?.icon || '❓';
 }
 
 /**
  * Get deductibility label for display
  */
-export function getDeductibilityLabel(deductible) {
+export function getDeductibilityLabel(deductible: DeductibleCategory): string {
   return DEDUCTIBILITY_TYPES[deductible]?.label || 'Unknown';
 }

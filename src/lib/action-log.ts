@@ -3,9 +3,65 @@
  */
 
 import { getDb } from './db.js';
+import type { ActionLog } from '../types.js';
+
+interface StartActionOptions {
+  action: string;
+  account: string;
+  year?: number | null;
+  monthFrom?: number | null;
+  monthTo?: number | null;
+}
+
+interface ActionProgress {
+  emailsFound?: number;
+  emailsProcessed?: number;
+  emailsNew?: number;
+  emailsSkipped?: number;
+  emailsFailed?: number;
+}
+
+interface ActionResults {
+  emailsFound?: number;
+  emailsProcessed?: number;
+  emailsNew?: number;
+  emailsSkipped?: number;
+  emailsFailed?: number;
+  notes?: unknown;
+}
+
+interface PartialResults {
+  emailsFound?: number;
+  emailsProcessed?: number;
+  emailsNew?: number;
+}
+
+interface YearStatus {
+  searched: number[];
+  notSearched: number[];
+  investigated: number[];
+  partiallyInvestigated: number[];
+  notInvestigated: number[];
+  downloaded: number[];
+  partiallyDownloaded: number[];
+  notDownloaded: number[];
+}
+
+interface EmailCountRow {
+  status: string;
+  count: number;
+}
+
+interface ActionStartRow {
+  started_at: string;
+}
+
+interface CountRow {
+  count: number;
+}
 
 // Initialize action log schema
-export function initActionLog() {
+export function initActionLog(): void {
   const db = getDb();
   db.exec(`
     CREATE TABLE IF NOT EXISTS action_log (
@@ -38,7 +94,7 @@ export function initActionLog() {
 /**
  * Start a new action
  */
-export function startAction(options) {
+export function startAction(options: StartActionOptions): number | bigint {
   const db = getDb();
   initActionLog();
   
@@ -64,11 +120,11 @@ export function startAction(options) {
 /**
  * Update action progress
  */
-export function updateActionProgress(actionId, progress) {
+export function updateActionProgress(actionId: number | bigint, progress: ActionProgress): void {
   const db = getDb();
   
-  const updates = [];
-  const params = { id: actionId };
+  const updates: string[] = [];
+  const params: Record<string, number | bigint> = { id: actionId };
   
   if (progress.emailsFound !== undefined) {
     updates.push('emails_found = @emailsFound');
@@ -100,11 +156,11 @@ export function updateActionProgress(actionId, progress) {
 /**
  * Complete an action successfully
  */
-export function completeAction(actionId, results = {}) {
+export function completeAction(actionId: number | bigint, results: ActionResults = {}): void {
   const db = getDb();
   
   // Get start time to calculate duration
-  const action = db.prepare('SELECT started_at FROM action_log WHERE id = @id').get({ id: actionId });
+  const action = db.prepare('SELECT started_at FROM action_log WHERE id = @id').get({ id: actionId }) as ActionStartRow | undefined;
   const startTime = action ? new Date(action.started_at) : new Date();
   const duration = (Date.now() - startTime.getTime()) / 1000;
   
@@ -138,10 +194,10 @@ export function completeAction(actionId, results = {}) {
 /**
  * Mark an action as failed
  */
-export function failAction(actionId, error, partialResults = {}) {
+export function failAction(actionId: number | bigint, error: Error | string, partialResults: PartialResults = {}): void {
   const db = getDb();
   
-  const action = db.prepare('SELECT started_at FROM action_log WHERE id = @id').get({ id: actionId });
+  const action = db.prepare('SELECT started_at FROM action_log WHERE id = @id').get({ id: actionId }) as ActionStartRow | undefined;
   const startTime = action ? new Date(action.started_at) : new Date();
   const duration = (Date.now() - startTime.getTime()) / 1000;
   
@@ -161,7 +217,7 @@ export function failAction(actionId, error, partialResults = {}) {
     id: actionId,
     finishedAt: new Date().toISOString(),
     duration,
-    errorMessage: error?.message || String(error),
+    errorMessage: error instanceof Error ? error.message : String(error),
     emailsFound: partialResults.emailsFound ?? null,
     emailsProcessed: partialResults.emailsProcessed ?? null,
     emailsNew: partialResults.emailsNew ?? null,
@@ -171,7 +227,7 @@ export function failAction(actionId, error, partialResults = {}) {
 /**
  * Mark any running actions as interrupted (call on startup)
  */
-export function markInterruptedActions() {
+export function markInterruptedActions(): number {
   const db = getDb();
   initActionLog();
   
@@ -189,11 +245,11 @@ export function markInterruptedActions() {
 /**
  * Get year status - which months have been searched/investigated
  */
-export function getYearStatus(account, year) {
+export function getYearStatus(account: string, year: number): YearStatus {
   const db = getDb();
   initActionLog();
   
-  const result = {
+  const result: YearStatus = {
     searched: [],
     notSearched: [],
     investigated: [],
@@ -213,7 +269,7 @@ export function getYearStatus(account, year) {
         AND month_from <= @month AND month_to >= @month
         AND action = 'search' AND status = 'completed'
       ORDER BY finished_at DESC LIMIT 1
-    `).get({ account, year, month });
+    `).get({ account, year, month }) as ActionLog | undefined;
     
     if (searchAction) {
       result.searched.push(month);
@@ -227,13 +283,12 @@ export function getYearStatus(account, year) {
       FROM emails 
       WHERE account = @account AND year = @year AND month = @month
       GROUP BY status
-    `).all({ account, year, month });
+    `).all({ account, year, month }) as EmailCountRow[];
     
-    const counts = Object.fromEntries(emailCounts.map(r => [r.status, r.count]));
+    const counts: Record<string, number> = Object.fromEntries(emailCounts.map(r => [r.status, r.count]));
     const pending = counts.pending || 0;
     const pendingDownload = counts.pending_download || 0;
-    const downloaded = counts.downloaded || 0;
-    const total = Object.values(counts).reduce((a, b) => a + b, 0);
+    const total = Object.values(counts).reduce((a: number, b: number) => a + b, 0);
     
     if (total === 0) {
       // No emails for this month
@@ -261,7 +316,7 @@ export function getYearStatus(account, year) {
 /**
  * Get recent actions
  */
-export function getRecentActions(account, limit = 20) {
+export function getRecentActions(account: string, limit: number = 20): ActionLog[] {
   const db = getDb();
   initActionLog();
   
@@ -272,13 +327,13 @@ export function getRecentActions(account, limit = 20) {
     LIMIT @limit
   `);
   
-  return stmt.all({ account, limit });
+  return stmt.all({ account, limit }) as ActionLog[];
 }
 
 /**
  * Get failed actions
  */
-export function getFailedActions(account) {
+export function getFailedActions(account: string): ActionLog[] {
   const db = getDb();
   initActionLog();
   
@@ -288,13 +343,13 @@ export function getFailedActions(account) {
     ORDER BY started_at DESC
   `);
   
-  return stmt.all({ account });
+  return stmt.all({ account }) as ActionLog[];
 }
 
 /**
  * Check if a month was searched
  */
-export function wasMonthSearched(account, year, month) {
+export function wasMonthSearched(account: string, year: number, month: number): boolean {
   const db = getDb();
   initActionLog();
   
@@ -305,15 +360,15 @@ export function wasMonthSearched(account, year, month) {
       AND action = 'search' AND status = 'completed'
   `);
   
-  const result = stmt.get({ account, year, month });
+  const result = stmt.get({ account, year, month }) as CountRow;
   return result.count > 0;
 }
 
 /**
  * Get months that haven't been searched for a year
  */
-export function getUnsearchedMonths(account, year) {
-  const unsearched = [];
+export function getUnsearchedMonths(account: string, year: number): number[] {
+  const unsearched: number[] = [];
   for (let month = 1; month <= 12; month++) {
     if (!wasMonthSearched(account, year, month)) {
       unsearched.push(month);

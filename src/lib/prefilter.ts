@@ -3,8 +3,10 @@
  * This saves AI API calls by filtering out emails that are clearly not invoices
  */
 
+import type { Email } from "../types.js";
+
 // Patterns that indicate the email is definitely NOT an invoice
-const NOT_INVOICE_PATTERNS = {
+const NOT_INVOICE_PATTERNS: { subject: RegExp[]; sender: RegExp[] } = {
   // Subject patterns
   subject: [
     // Order/shipping confirmations (invoice comes separately)
@@ -72,7 +74,7 @@ const NOT_INVOICE_PATTERNS = {
 };
 
 // Patterns that indicate the email IS likely an invoice (override NOT patterns)
-const IS_INVOICE_PATTERNS = {
+const IS_INVOICE_PATTERNS: { subject: RegExp[]; sender: RegExp[] } = {
   subject: [
     /\bRechnung\b/i, // German: Invoice
     /\bInvoice\b/i, // English: Invoice
@@ -99,11 +101,33 @@ const IS_INVOICE_PATTERNS = {
   ],
 };
 
+export interface SkipResult {
+  skip: boolean;
+  reason: string | null;
+}
+
+export interface SkippedEmail {
+  email: Email;
+  reason: string | null;
+}
+
+export interface PrefilterResult {
+  toAnalyze: Email[];
+  toSkip: SkippedEmail[];
+}
+
+export interface PrefilterStats {
+  total: number;
+  toAnalyze: number;
+  toSkip: number;
+  skipReasons: Record<string, number>;
+}
+
 /**
  * Check if an email should be skipped (definitely not an invoice)
  * Returns: { skip: boolean, reason: string | null }
  */
-export function shouldSkipEmail(email) {
+export function shouldSkipEmail(email: Email): SkipResult {
   const subject = email.subject || "";
   const sender = email.sender || "";
 
@@ -147,9 +171,9 @@ export function shouldSkipEmail(email) {
  * Filter a batch of emails, separating into needs-analysis and skip
  * Returns: { toAnalyze: Email[], toSkip: { email: Email, reason: string }[] }
  */
-export function prefilterEmails(emails) {
-  const toAnalyze = [];
-  const toSkip = [];
+export function prefilterEmails(emails: Email[]): PrefilterResult {
+  const toAnalyze: Email[] = [];
+  const toSkip: SkippedEmail[] = [];
 
   for (const email of emails) {
     const result = shouldSkipEmail(email);
@@ -166,12 +190,12 @@ export function prefilterEmails(emails) {
 /**
  * Get stats on what would be filtered
  */
-export function getPrefilterStats(emails) {
+export function getPrefilterStats(emails: Email[]): PrefilterStats {
   const { toAnalyze, toSkip } = prefilterEmails(emails);
 
-  const skipReasons = {};
+  const skipReasons: Record<string, number> = {};
   for (const { reason } of toSkip) {
-    const key = reason.split(":")[0];
+    const key = reason?.split(":")[0] ?? "unknown";
     skipReasons[key] = (skipReasons[key] || 0) + 1;
   }
 

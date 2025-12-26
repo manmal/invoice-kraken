@@ -1,9 +1,9 @@
 /**
  * AI module using pi-coding-agent SDK
- * 
+ *
  * This module provides AI-powered analysis capabilities using the pi SDK
  * directly, instead of spawning the pi CLI executable.
- * 
+ *
  * Authentication: Uses Anthropic OAuth tokens stored by pi in ~/.pi/agent/auth.json
  * If not logged in or token expired, user must run `pi` and use `/login` command.
  */
@@ -12,26 +12,54 @@ import {
   discoverAuthStorage,
   discoverModels,
   AuthStorage,
-  ModelRegistry,
   SessionManager,
   SettingsManager,
   createAgentSession,
 } from '@mariozechner/pi-coding-agent';
+import type { ModelRegistry } from '@mariozechner/pi-coding-agent';
+import type { Model, Api } from '@mariozechner/pi-ai';
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
 import { getModelForTask, DEFAULT_MODEL_CONFIG } from './models.js';
-import { loadConfig, getVehicleVatRecovery, getTelecomBusinessPercent, isKleinunternehmer } from './config.js';
+import {
+  loadConfig,
+  getVehicleVatRecovery,
+  getTelecomBusinessPercent,
+  isKleinunternehmer,
+} from './config.js';
 import { emptyUsage, addUsage } from './tokens.js';
+import type { Usage } from './tokens.js';
 import { getEmailBodiesBatch, getTruncatedBody } from './email-cache.js';
+import type { Email } from '../types.js';
 
-let authStorage = null;
-let modelRegistry = null;
+interface AgentEvent {
+  type: string;
+  assistantMessageEvent?: {
+    type: string;
+    delta?: string;
+  };
+  message?: {
+    usage?: Partial<Usage>;
+    model?: string;
+    provider?: string;
+  };
+}
+
+interface AgentSession {
+  subscribe: (callback: (event: AgentEvent) => void) => void;
+  prompt: (text: string) => Promise<void>;
+  dispose: () => void;
+}
+
+// Module-level state
+let authStorage: AuthStorage | null = null;
+let modelRegistry: ModelRegistry | null = null;
 
 /**
  * Get the pi agent directory
  */
-function getAgentDir() {
+function getAgentDir(): string {
   return path.join(os.homedir(), '.pi', 'agent');
 }
 
@@ -39,12 +67,12 @@ function getAgentDir() {
  * Initialize auth storage and model registry
  * pi stores OAuth tokens in oauth.json (not auth.json)
  */
-function initAuth() {
+function initAuth(): { authStorage: AuthStorage; modelRegistry: ModelRegistry } {
   if (!authStorage) {
     // pi stores OAuth in oauth.json, not auth.json
     const agentDir = getAgentDir();
     const oauthPath = path.join(agentDir, 'oauth.json');
-    
+
     // Check if oauth.json exists and use it
     if (fs.existsSync(oauthPath)) {
       authStorage = new AuthStorage(oauthPath);
@@ -52,25 +80,27 @@ function initAuth() {
       // Fall back to standard discovery
       authStorage = discoverAuthStorage();
     }
-    
+
     modelRegistry = discoverModels(authStorage);
   }
-  return { authStorage, modelRegistry };
+  return { authStorage: authStorage!, modelRegistry: modelRegistry! };
 }
 
 /**
  * Check if authentication is available
  * Returns error message if not authenticated, null if OK
  */
-export async function checkAuth() {
+export async function checkAuth(): Promise<string | null> {
   const { modelRegistry } = initAuth();
-  
+
   try {
     const available = await modelRegistry.getAvailable();
-    
+
     // Check if any Anthropic models are available
-    const anthropicModels = available.filter(m => m.provider.toLowerCase() === 'anthropic');
-    
+    const anthropicModels = available.filter(
+      (m) => m.provider.toLowerCase() === 'anthropic'
+    );
+
     if (anthropicModels.length === 0) {
       return `
 ╔════════════════════════════════════════════════════════════════════════════╗
@@ -89,32 +119,32 @@ export async function checkAuth() {
 ╚════════════════════════════════════════════════════════════════════════════╝
 `;
     }
-    
+
     return null; // Auth OK
   } catch (error) {
-    return `Authentication check failed: ${error.message}`;
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return `Authentication check failed: ${errorMessage}`;
   }
 }
 
 /**
  * Create a simple prompt-response session for classification tasks
  * No tools, no persistence, just LLM completion
- * 
- * @param {string} prompt - The prompt to send
- * @param {string} task - Task name for model selection
- * @param {string} [modelOverride] - Override model ID (e.g., 'claude-opus-4-5')
- * @returns {Promise<{output: string, usage: Object, model: string, provider: string}>}
  */
-async function simplePrompt(prompt, task = 'emailClassification', modelOverride = null) {
+async function simplePrompt(
+  prompt: string,
+  task: keyof typeof DEFAULT_MODEL_CONFIG = 'emailClassification',
+  modelOverride: string | null = null
+): Promise<{ output: string; usage: Usage; model: string; provider: string }> {
   const { authStorage, modelRegistry } = initAuth();
-  
+
   const taskConfig = getModelForTask(task);
   if (!taskConfig) {
     throw new Error(`Unknown task: ${task}`);
   }
-  
+
   // Allow model override for comparison testing
-  let modelToUse = taskConfig.model;
+  let modelToUse: Model<Api> = taskConfig.model as Model<Api>;
   if (modelOverride) {
     const overrideModel = modelRegistry.find('anthropic', modelOverride);
     if (overrideModel) {
@@ -123,8 +153,8 @@ async function simplePrompt(prompt, task = 'emailClassification', modelOverride 
       console.warn(`Model override '${modelOverride}' not found, using default`);
     }
   }
-  
-  const { session } = await createAgentSession({
+
+  const { session } = (await createAgentSession({
     sessionManager: SessionManager.inMemory(),
     settingsManager: SettingsManager.inMemory({
       compaction: { enabled: false },
@@ -133,23 +163,30 @@ async function simplePrompt(prompt, task = 'emailClassification', modelOverride 
     authStorage,
     modelRegistry,
     model: modelToUse,
-    thinkingLevel: taskConfig.thinkingLevel,
+    thinkingLevel: taskConfig.thinkingLevel as
+      | 'off'
+      | 'minimal'
+      | 'low'
+      | 'medium'
+      | 'high'
+      | 'xhigh',
     tools: [], // No tools for simple classification
     customTools: [], // Prevent subagent discovery
     skills: [],
     hooks: [],
     contextFiles: [],
-    systemPrompt: 'You are a data extraction assistant. Always respond with valid JSON only, no markdown formatting, no explanation.',
-  });
-  
+    systemPrompt:
+      'You are a data extraction assistant. Always respond with valid JSON only, no markdown formatting, no explanation.',
+  })) as { session: AgentSession };
+
   let output = '';
   const usage = emptyUsage();
   let modelId = modelToUse.id;
   let providerId = modelToUse.provider;
-  
-  session.subscribe((event) => {
+
+  session.subscribe((event: AgentEvent) => {
     if (event.type === 'message_update' && event.assistantMessageEvent?.type === 'text_delta') {
-      output += event.assistantMessageEvent.delta;
+      output += event.assistantMessageEvent.delta || '';
     }
     // Collect token usage from turn_end events
     if (event.type === 'turn_end' && event.message?.usage) {
@@ -158,7 +195,7 @@ async function simplePrompt(prompt, task = 'emailClassification', modelOverride 
       providerId = event.message.provider || providerId;
     }
   });
-  
+
   try {
     await session.prompt(prompt);
     return { output: output.trim(), usage, model: modelId, provider: providerId };
@@ -167,26 +204,42 @@ async function simplePrompt(prompt, task = 'emailClassification', modelOverride 
   }
 }
 
+/** Email with optional enriched body preview */
+interface EnrichedEmail extends Partial<Email> {
+  id: string;
+  subject?: string | null;
+  sender?: string | null;
+  date?: string | null;
+  snippet?: string | null;
+  raw_json?: string | null;
+  bodyPreview?: string | null;
+}
+
 /**
  * Build the email classification prompt with user config context
- * @param {Object[]} emails - Emails with optional bodyPreview field
  */
-function buildClassificationPrompt(emails) {
+function buildClassificationPrompt(emails: EnrichedEmail[]): string {
   const config = loadConfig();
   const vehicleVat = getVehicleVatRecovery();
   const telecomPercent = getTelecomBusinessPercent();
   const kleinunternehmer = isKleinunternehmer();
-  
-  const emailsJson = JSON.stringify(emails.map(e => ({
-    id: e.id,
-    subject: e.subject,
-    sender: e.sender,
-    date: e.date,
-    snippet: e.snippet,
-    bodyPreview: e.bodyPreview || null, // Truncated body content (max 1KB)
-    hasAttachment: e.raw_json ? JSON.parse(e.raw_json).payload?.parts?.some(p => p.filename) : false,
-  })), null, 2);
-  
+
+  const emailsJson = JSON.stringify(
+    emails.map((e) => ({
+      id: e.id,
+      subject: e.subject,
+      sender: e.sender,
+      date: e.date,
+      snippet: e.snippet,
+      bodyPreview: e.bodyPreview || null, // Truncated body content (max 1KB)
+      hasAttachment: e.raw_json
+        ? JSON.parse(e.raw_json).payload?.parts?.some((p: { filename?: string }) => p.filename)
+        : false,
+    })),
+    null,
+    2
+  );
+
   // Build context based on user config
   let vehicleContext = 'No company car configured';
   if (config.has_company_car) {
@@ -198,11 +251,11 @@ function buildClassificationPrompt(emails) {
       vehicleContext = 'ICE/Hybrid company car - NO VAT recovery on vehicle expenses (Austrian rule)';
     }
   }
-  
-  const vatContext = kleinunternehmer 
+
+  const vatContext = kleinunternehmer
     ? 'User is KLEINUNTERNEHMER - NO VAT recovery on ANY expenses!'
     : 'User is NOT Kleinunternehmer - VAT recovery applies per category';
-  
+
   return `Analyze these emails and categorize each one for invoice processing.
 
 CRITICAL RULES FOR "has_invoice":
@@ -309,30 +362,60 @@ Return ONLY a valid JSON array with this structure:
 }]`;
 }
 
+/** Result from AI classification for a single email */
+export interface EmailClassificationResult {
+  id: string;
+  has_invoice: boolean;
+  invoice_type: 'text' | 'pdf_attachment' | 'link' | 'none';
+  invoice_number?: string | null;
+  amount?: string | null;
+  invoice_date?: string | null;
+  vendor_product?: string | null;
+  deductible?: 'full' | 'vehicle' | 'meals' | 'telecom' | 'none' | 'unclear';
+  deductible_reason?: string | null;
+  income_tax_percent?: number | null;
+  vat_recoverable?: boolean | null;
+  confidence: 'high' | 'medium' | 'low';
+  notes?: string | null;
+}
+
+/** Options for analyzeEmailsForInvoices */
+export interface AnalyzeEmailsOptions {
+  account?: string;
+  modelOverride?: string;
+}
+
+/** Return type for analyzeEmailsForInvoices */
+export interface AnalyzeEmailsResult {
+  results: EmailClassificationResult[];
+  usage: Usage;
+  model: string;
+  provider: string;
+}
+
 /**
  * Analyze emails for invoice classification
- * @param {Object[]} emails - Emails to analyze
- * @param {Object} [options] - Options
- * @param {string} [options.modelOverride] - Override model ID (e.g., 'claude-opus-4-5')
- * @returns {Promise<{results: Object[], usage: Object, model: string, provider: string}>}
  */
-export async function analyzeEmailsForInvoices(emails, options = {}) {
+export async function analyzeEmailsForInvoices(
+  emails: EnrichedEmail[],
+  options: AnalyzeEmailsOptions = {}
+): Promise<AnalyzeEmailsResult> {
   // Check authentication first
   const authError = await checkAuth();
   if (authError) {
     console.error(authError);
     throw new Error('Authentication required. Run `pi` and use `/login` to authenticate.');
   }
-  
+
   // Fetch email bodies (cached) if account is provided
   const account = options.account;
-  let enrichedEmails = emails;
-  
+  let enrichedEmails: EnrichedEmail[] = emails;
+
   if (account) {
-    const messageIds = emails.map(e => e.id);
+    const messageIds = emails.map((e) => e.id);
     const bodies = await getEmailBodiesBatch(account, messageIds, 4);
-    
-    enrichedEmails = emails.map(e => {
+
+    enrichedEmails = emails.map((e) => {
       const body = bodies.get(e.id);
       return {
         ...e,
@@ -340,37 +423,42 @@ export async function analyzeEmailsForInvoices(emails, options = {}) {
       };
     });
   }
-  
+
   const prompt = buildClassificationPrompt(enrichedEmails);
-  
+
   try {
-    const { output, usage, model, provider } = await simplePrompt(prompt, 'emailClassification', options.modelOverride);
-    
+    const { output, usage, model, provider } = await simplePrompt(
+      prompt,
+      'emailClassification',
+      options.modelOverride ?? null
+    );
+
     // Extract JSON from response (it might have markdown code blocks)
     let jsonStr = output;
     const jsonMatch = output.match(/```(?:json)?\s*([\s\S]*?)```/);
     if (jsonMatch) {
       jsonStr = jsonMatch[1];
     }
-    
+
     // Try to find JSON array in the output
     const arrayMatch = jsonStr.match(/\[[\s\S]*\]/);
     if (arrayMatch) {
       jsonStr = arrayMatch[0];
     }
-    
-    const results = JSON.parse(jsonStr);
+
+    const results = JSON.parse(jsonStr) as EmailClassificationResult[];
     return { results, usage, model, provider };
   } catch (error) {
-    console.error('Error analyzing emails:', error.message);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error('Error analyzing emails:', errorMessage);
     // Return empty analysis on error
     return {
-      results: emails.map(e => ({
+      results: emails.map((e) => ({
         id: e.id,
         has_invoice: false,
-        invoice_type: 'none',
-        confidence: 'low',
-        notes: `Analysis failed: ${error.message}`,
+        invoice_type: 'none' as const,
+        confidence: 'low' as const,
+        notes: `Analysis failed: ${errorMessage}`,
       })),
       usage: emptyUsage(),
       model: 'unknown',

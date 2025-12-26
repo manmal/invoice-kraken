@@ -2,15 +2,26 @@
  * PDF generation utilities
  */
 
-import fs from 'fs';
-import path from 'path';
+import * as fs from 'fs';
+import * as path from 'path';
 import { execSync } from 'child_process';
+
+/**
+ * Metadata for PDF generation from email content
+ */
+interface PdfMetadata {
+  sender?: string;
+  subject?: string;
+  date?: string;
+  invoiceNumber?: string;
+  amount?: string;
+}
 
 /**
  * Generate a simple text-based PDF from HTML content
  * Uses the system's html-to-pdf capabilities or falls back to text file
  */
-export async function generatePdfFromHtml(html, outputPath) {
+export async function generatePdfFromHtml(html: string, outputPath: string): Promise<boolean> {
   // Ensure directory exists
   const dir = path.dirname(outputPath);
   fs.mkdirSync(dir, { recursive: true });
@@ -36,7 +47,7 @@ export async function generatePdfFromHtml(html, outputPath) {
     fs.writeFileSync(tempHtmlPath, html);
     
     // Try different Chrome paths
-    const chromePaths = [
+    const chromePaths: string[] = [
       '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
       '/Applications/Chromium.app/Contents/MacOS/Chromium',
       'google-chrome',
@@ -51,7 +62,9 @@ export async function generatePdfFromHtml(html, outputPath) {
         );
         fs.unlinkSync(tempHtmlPath);
         return true;
-      } catch {}
+      } catch {
+        // This Chrome path not available, try next
+      }
     }
     
     fs.unlinkSync(tempHtmlPath);
@@ -69,7 +82,7 @@ export async function generatePdfFromHtml(html, outputPath) {
  * Generate PDF from email HTML content
  * Cleans up CSS that might cause rendering issues (external fonts, etc.)
  */
-export async function generatePdfFromEmailHtml(html, metadata, outputPath) {
+export async function generatePdfFromEmailHtml(html: string, metadata: PdfMetadata, outputPath: string): Promise<boolean> {
   // Clean the HTML for offline rendering
   let cleanedHtml = html
     // Remove @font-face rules that reference external URLs
@@ -121,7 +134,7 @@ ${cleanedHtml}
 /**
  * Generate PDF from plain text email content
  */
-export async function generatePdfFromText(text, metadata, outputPath) {
+export async function generatePdfFromText(text: string, metadata: PdfMetadata, outputPath: string): Promise<boolean> {
   const html = `
 <!DOCTYPE html>
 <html>
@@ -189,7 +202,7 @@ export async function generatePdfFromText(text, metadata, outputPath) {
 /**
  * Escape HTML special characters
  */
-function escapeHtml(text) {
+function escapeHtml(text: string): string {
   if (!text) return '';
   return text
     .replace(/&/g, '&amp;')
@@ -202,9 +215,9 @@ function escapeHtml(text) {
 /**
  * Get the invoice output path
  */
-export function getInvoicePath(baseDir, date, name) {
+export function getInvoicePath(baseDir: string, date: Date | string, name: string): string {
   // Parse date
-  let year, month, day;
+  let year: number | string, month: string, day: string;
   
   if (date instanceof Date) {
     year = date.getFullYear();
@@ -220,7 +233,7 @@ export function getInvoicePath(baseDir, date, name) {
       // Try parsing YYYY-MM-DD format
       const match = date.match(/(\d{4})-(\d{2})-(\d{2})/);
       if (match) {
-        [, year, month, day] = match;
+        [, year, month, day] = match as [string, string, string, string];
       } else {
         year = new Date().getFullYear();
         month = '01';

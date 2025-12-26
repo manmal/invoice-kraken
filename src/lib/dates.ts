@@ -8,13 +8,20 @@
  * - --quarter 2025-Q4 (quarter)
  */
 
+import type { DateRange, YearMonth } from '../types.js';
+
+interface DateRangeOptions {
+  from?: string;
+  to?: string;
+  year?: string;
+  month?: string;
+  quarter?: string;
+}
+
 /**
  * Parse a date range from command options
- * 
- * @param {Object} options - Command options
- * @returns {{from: Date, to: Date, display: string}}
  */
-export function parseDateRange(options) {
+export function parseDateRange(options: DateRangeOptions): DateRange {
   const { from, to, year, month, quarter } = options;
   
   // Explicit date range
@@ -106,7 +113,7 @@ export function parseDateRange(options) {
 /**
  * Parse a date string (YYYY-MM-DD)
  */
-function parseDate(str) {
+function parseDate(str: string): Date | null {
   const match = str.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!match) return null;
   
@@ -127,7 +134,7 @@ function parseDate(str) {
 /**
  * Set time to end of day (23:59:59.999)
  */
-function endOfDay(date) {
+function endOfDay(date: Date): Date {
   const d = new Date(date);
   d.setHours(23, 59, 59, 999);
   return d;
@@ -136,7 +143,7 @@ function endOfDay(date) {
 /**
  * Format date as YYYY-MM-DD
  */
-export function formatDate(date) {
+export function formatDate(date: Date): string {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, '0');
   const d = String(date.getDate()).padStart(2, '0');
@@ -146,7 +153,7 @@ export function formatDate(date) {
 /**
  * Get month name
  */
-function getMonthName(month) {
+function getMonthName(month: number): string {
   const names = [
     'January', 'February', 'March', 'April', 'May', 'June',
     'July', 'August', 'September', 'October', 'November', 'December'
@@ -157,7 +164,7 @@ function getMonthName(month) {
 /**
  * Get year and month from date
  */
-export function getYearMonth(date) {
+export function getYearMonth(date: Date): YearMonth {
   return {
     year: date.getFullYear(),
     month: date.getMonth() + 1,
@@ -166,12 +173,8 @@ export function getYearMonth(date) {
 
 /**
  * Iterate through months in a date range
- * 
- * @param {Date} from 
- * @param {Date} to 
- * @yields {{year: number, month: number}}
  */
-export function* iterateMonths(from, to) {
+export function* iterateMonths(from: Date, to: Date): Generator<YearMonth> {
   const current = new Date(from.getFullYear(), from.getMonth(), 1);
   const end = new Date(to.getFullYear(), to.getMonth(), 1);
   
@@ -187,7 +190,7 @@ export function* iterateMonths(from, to) {
 /**
  * Check if a date is within a range
  */
-export function isInRange(date, from, to) {
+export function isInRange(date: Date | string, from: Date, to: Date): boolean {
   const d = new Date(date);
   return d >= from && d <= to;
 }

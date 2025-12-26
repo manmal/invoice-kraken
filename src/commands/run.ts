@@ -8,8 +8,9 @@ import { crawlCommand } from './crawl.js';
 import { reviewCommand } from './review.js';
 import { closeBrowser } from '../lib/browser.js';
 import { parseDateRange, getYearMonth } from '../lib/dates.js';
+import type { RunOptions } from '../types.js';
 
-export async function runCommand(options) {
+export async function runCommand(options: RunOptions): Promise<void> {
   const { account, batchSize = 10, autoDedup = false, strict = false } = options;
   
   // Parse date range
@@ -17,7 +18,7 @@ export async function runCommand(options) {
   try {
     dateRange = parseDateRange(options);
   } catch (error) {
-    console.error(`Error: ${error.message}`);
+    console.error(`Error: ${(error as Error).message}`);
     process.exit(1);
   }
   
@@ -29,7 +30,7 @@ export async function runCommand(options) {
   console.log(`\nAccount: ${account}`);
   console.log(`Period: ${dateRange.display}\n`);
   
-  const startTime = Date.now();
+  const startTime: number = Date.now();
   
   try {
     // Stage 1: Scan
@@ -38,8 +39,7 @@ export async function runCommand(options) {
     console.log('└────────────────────────────────────────────────────────────────────────────┘\n');
     
     await scanCommand({
-      account,
-      ...options, // Pass through date options
+      ...options, // Pass through date options (includes account)
     });
     
     console.log('\n');
@@ -80,13 +80,14 @@ export async function runCommand(options) {
       format: 'table',
       summary: true,
       year: fromYM.year,
+      includeDuplicates: false,
     });
     
   } finally {
     await closeBrowser();
   }
   
-  const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+  const duration: string = ((Date.now() - startTime) / 1000).toFixed(1);
   
   console.log('\n╔════════════════════════════════════════════════════════════════════════════╗');
   console.log('║  ✅ PIPELINE COMPLETE                                                       ║');

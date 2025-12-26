@@ -2,28 +2,27 @@
  * Path utilities
  */
 
-import path from 'path';
-import fs from 'fs';
+import * as path from 'path';
 import { getInvoicesDir as getInvoicesDirFromPaths, ensureDir as ensureDirFromPaths } from '../lib/paths.js';
 
 /**
  * Get the base invoices directory
  */
-export function getInvoicesDir() {
+export function getInvoicesDir(): string {
   return getInvoicesDirFromPaths();
 }
 
 /**
  * Ensure a directory exists
  */
-export function ensureDir(dirPath) {
+export function ensureDir(dirPath: string): string {
   return ensureDirFromPaths(dirPath);
 }
 
 /**
  * Sanitize a string for use in filenames (snake_case)
  */
-export function sanitizeFilename(name) {
+export function sanitizeFilename(name: string): string {
   return name
     .toLowerCase()
     // Replace German umlauts
@@ -45,11 +44,11 @@ export function sanitizeFilename(name) {
 /**
  * Generate invoice output path
  */
-export function getInvoiceOutputPath(date, senderName, invoiceNumber) {
+export function getInvoiceOutputPath(date: string | null, senderName: string | null, invoiceNumber: string | null): string {
   const invoicesDir = getInvoicesDir();
   
   // Parse date
-  let year, month, day;
+  let year: number | undefined, month: string | undefined, day: string | undefined;
   if (date) {
     const d = new Date(date);
     if (!isNaN(d.getTime())) {
@@ -72,7 +71,7 @@ export function getInvoiceOutputPath(date, senderName, invoiceNumber) {
   const safeInvoice = invoiceNumber ? `-${sanitizeFilename(invoiceNumber)}` : '';
   const filename = `${day}-${safeSender}${safeInvoice}.pdf`;
   
-  const outputPath = path.join(invoicesDir, String(year), month, filename);
+  const outputPath = path.join(invoicesDir, String(year), month!, filename);
   
   // Ensure directory exists
   ensureDir(path.dirname(outputPath));

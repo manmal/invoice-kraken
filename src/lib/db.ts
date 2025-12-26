@@ -3,22 +3,28 @@
  */
 
 import Database from 'better-sqlite3';
+import type { Database as DatabaseType, RunResult } from 'better-sqlite3';
 import { getDatabasePath } from './paths.js';
+import type { Email, EmailStatus, DeductibleCategory } from '../types.js';
 
-const DB_PATH = getDatabasePath();
+const DB_PATH: string = getDatabasePath();
 
-let db = null;
+let db: DatabaseType | null = null;
 
-export function getDb() {
+export function getDb(): DatabaseType {
   if (!db) {
-    db = new Database(DB_PATH, { create: true });
+    // Note: better-sqlite3 creates the database by default if it doesn't exist
+    // (when fileMustExist is false/undefined)
+    db = new Database(DB_PATH);
     db.exec('PRAGMA journal_mode = WAL');
     initSchema();
   }
   return db;
 }
 
-function initSchema() {
+function initSchema(): void {
+  if (!db) return;
+  
   db.exec(`
     CREATE TABLE IF NOT EXISTS emails (
       id TEXT PRIMARY KEY,
@@ -82,7 +88,22 @@ function initSchema() {
   } catch (e) { /* column may already exist */ }
 }
 
-export function insertEmail(email) {
+export interface EmailInsertData {
+  id: string;
+  thread_id: string | null;
+  account: string;
+  year: number;
+  month: number;
+  subject: string | null;
+  sender: string | null;
+  sender_domain: string | null;
+  date: string | null;
+  snippet: string | null;
+  labels: string | null;
+  raw_json: string | null;
+}
+
+export function insertEmail(email: EmailInsertData): boolean {
   const db = getDb();
   const stmt = db.prepare(`
     INSERT OR IGNORE INTO emails (
@@ -94,7 +115,7 @@ export function insertEmail(email) {
     )
   `);
   
-  const result = stmt.run({
+  const result: RunResult = stmt.run({
     id: email.id,
     thread_id: email.thread_id,
     account: email.account,
@@ -112,7 +133,7 @@ export function insertEmail(email) {
   return result.changes > 0;
 }
 
-export function getEmailsByStatus(account, status, limit = 100) {
+export function getEmailsByStatus(account: string, status: EmailStatus, limit: number = 100): Email[] {
   const db = getDb();
   const stmt = db.prepare(`
     SELECT * FROM emails 
@@ -120,19 +141,19 @@ export function getEmailsByStatus(account, status, limit = 100) {
     ORDER BY date ASC
     LIMIT @limit
   `);
-  return stmt.all({ account, status, limit });
+  return stmt.all({ account, status, limit }) as Email[];
 }
 
-export function getEmailById(id, account) {
+export function getEmailById(id: string, account: string): Email | undefined {
   const db = getDb();
   const stmt = db.prepare(`SELECT * FROM emails WHERE id = @id AND account = @account`);
-  return stmt.get({ id, account });
+  return stmt.get({ id, account }) as Email | undefined;
 }
 
-export function updateEmailStatus(id, account, status, extra = {}) {
+export function updateEmailStatus(id: string, account: string, status: EmailStatus, extra: Record<string, unknown> = {}): RunResult {
   const db = getDb();
-  const updates = ['status = @status', 'updated_at = CURRENT_TIMESTAMP'];
-  const params = { status, id, account };
+  const updates: string[] = ['status = @status', 'updated_at = CURRENT_TIMESTAMP'];
+  const params: Record<string, unknown> = { status, id, account };
   
   let paramIndex = 0;
   for (const [key, value] of Object.entries(extra)) {
@@ -148,7 +169,11 @@ export function updateEmailStatus(id, account, status, extra = {}) {
   return stmt.run(params);
 }
 
-export function findDuplicateByInvoiceNumber(invoiceNumber, senderDomain, excludeId, account) {
+export interface DuplicateMatch {
+  id: string;
+}
+
+export function findDuplicateByInvoiceNumber(invoiceNumber: string, senderDomain: string, excludeId: string, account: string): DuplicateMatch | undefined {
   const db = getDb();
   const stmt = db.prepare(`
     SELECT id FROM emails 
@@ -156,20 +181,20 @@ export function findDuplicateByInvoiceNumber(invoiceNumber, senderDomain, exclud
     AND status NOT IN ('no_invoice', 'duplicate')
     LIMIT 1
   `);
-  return stmt.get({ invoiceNumber, senderDomain, excludeId, account });
+  return stmt.get({ invoiceNumber, senderDomain, excludeId, account }) as DuplicateMatch | undefined;
 }
 
-export function findDuplicateByHash(hash, excludeId, account) {
+export function findDuplicateByHash(hash: string, excludeId: string, account: string): DuplicateMatch | undefined {
   const db = getDb();
   const stmt = db.prepare(`
     SELECT id FROM emails 
     WHERE attachment_hash = @hash AND id != @excludeId AND account = @account
     LIMIT 1
   `);
-  return stmt.get({ hash, excludeId, account });
+  return stmt.get({ hash, excludeId, account }) as DuplicateMatch | undefined;
 }
 
-export function findDuplicateByFuzzyMatch(senderDomain, amount, invoiceDate, excludeId, account) {
+export function findDuplicateByFuzzyMatch(senderDomain: string, amount: string, invoiceDate: string, excludeId: string, account: string): DuplicateMatch | undefined {
   const db = getDb();
   const stmt = db.prepare(`
     SELECT id FROM emails 
@@ -181,10 +206,16 @@ export function findDuplicateByFuzzyMatch(senderDomain, amount, invoiceDate, exc
       AND status NOT IN ('no_invoice', 'duplicate')
     LIMIT 1
   `);
-  return stmt.get({ senderDomain, amount, invoiceDate, excludeId, account });
+  return stmt.get({ senderDomain, amount, invoiceDate, excludeId, account }) as DuplicateMatch | undefined;
 }
 
-export function getDeductibilitySummary(account, year = null) {
+export interface DeductibilitySummaryRow {
+  deductible: DeductibleCategory | null;
+  count: number;
+  total_cents: number | null;
+}
+
+export function getDeductibilitySummary(account: string, year: number | null = null): DeductibilitySummaryRow[] {
   const db = getDb();
   let query = `
     SELECT 
@@ -194,7 +225,7 @@ export function getDeductibilitySummary(account, year = null) {
     FROM emails 
     WHERE account = @account AND status = 'downloaded'
   `;
-  const params = { account };
+  const params: Record<string, unknown> = { account };
   
   if (year) {
     query += ' AND year = @year';
@@ -204,16 +235,16 @@ export function getDeductibilitySummary(account, year = null) {
   query += ' GROUP BY deductible';
   
   const stmt = db.prepare(query);
-  return stmt.all(params);
+  return stmt.all(params) as DeductibilitySummaryRow[];
 }
 
-export function getManualItems(account, deductibleFilter = null) {
+export function getManualItems(account: string, deductibleFilter: DeductibleCategory | null = null): Email[] {
   const db = getDb();
   let query = `
     SELECT * FROM emails 
     WHERE account = @account AND status = 'manual'
   `;
-  const params = { account };
+  const params: Record<string, unknown> = { account };
   
   if (deductibleFilter) {
     query += ' AND deductible = @deductible';
@@ -223,10 +254,10 @@ export function getManualItems(account, deductibleFilter = null) {
   query += ' ORDER BY date DESC';
   
   const stmt = db.prepare(query);
-  return stmt.all(params);
+  return stmt.all(params) as Email[];
 }
 
-export function closeDb() {
+export function closeDb(): void {
   if (db) {
     db.close();
     db = null;

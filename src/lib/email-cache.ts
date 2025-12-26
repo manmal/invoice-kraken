@@ -5,14 +5,33 @@
  */
 
 import Database from 'better-sqlite3';
-import { execSync } from 'child_process';
+import type { Database as DatabaseType } from 'better-sqlite3';
+import * as child_process from 'child_process';
 import { getDatabasePath } from './paths.js';
+import type { GmailPayload } from '../types.js';
 
-const DB_PATH = getDatabasePath();
+const DB_PATH: string = getDatabasePath();
 
-let db = null;
+let db: DatabaseType | null = null;
 
-function getDb() {
+interface EmailCacheRow {
+  id: string;
+  account: string;
+  body_text: string | null;
+  body_html: string | null;
+  fetched_at: string;
+}
+
+interface CacheStats {
+  totalCached: number;
+}
+
+interface EmailBody {
+  textBody: string;
+  htmlBody: string;
+}
+
+function getDb(): DatabaseType {
   if (!db) {
     db = new Database(DB_PATH);
     initSchema();
@@ -20,7 +39,9 @@ function getDb() {
   return db;
 }
 
-function initSchema() {
+function initSchema(): void {
+  if (!db) return;
+  
   db.exec(`
     CREATE TABLE IF NOT EXISTS email_cache (
       id TEXT PRIMARY KEY,
@@ -36,21 +57,19 @@ function initSchema() {
 
 /**
  * Get cached email content
- * @param {string} messageId 
- * @returns {Object|null} Cached content or null
  */
-export function getCached(messageId) {
-  const db = getDb();
-  const row = db.prepare('SELECT * FROM email_cache WHERE id = ?').get(messageId);
+export function getCached(messageId: string): EmailCacheRow | null {
+  const database = getDb();
+  const row = database.prepare('SELECT * FROM email_cache WHERE id = ?').get(messageId) as EmailCacheRow | undefined;
   return row || null;
 }
 
 /**
  * Store email content in cache
  */
-export function setCache(messageId, account, bodyText, bodyHtml) {
-  const db = getDb();
-  db.prepare(`
+export function setCache(messageId: string, account: string, bodyText: string | null, bodyHtml: string | null): void {
+  const database = getDb();
+  database.prepare(`
     INSERT OR REPLACE INTO email_cache (id, account, body_text, body_html, fetched_at)
     VALUES (?, ?, ?, ?, datetime('now'))
   `).run(messageId, account, bodyText, bodyHtml);
@@ -59,7 +78,7 @@ export function setCache(messageId, account, bodyText, bodyHtml) {
 /**
  * Extract text content from Gmail message payload
  */
-function extractBodyFromPayload(payload) {
+function extractBodyFromPayload(payload: GmailPayload | undefined): EmailBody {
   let textBody = '';
   let htmlBody = '';
   
@@ -87,17 +106,24 @@ function extractBodyFromPayload(payload) {
   return { textBody, htmlBody };
 }
 
+interface GmailGetResult {
+  message?: {
+    payload?: GmailPayload;
+  };
+  payload?: GmailPayload;
+}
+
 /**
  * Fetch email from gog and cache it
  */
-async function fetchAndCache(account, messageId) {
+async function fetchAndCache(account: string, messageId: string): Promise<EmailBody | null> {
   try {
-    const output = execSync(
+    const output = child_process.execSync(
       `gog gmail get ${messageId} --account ${account} --output json`,
       { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024, timeout: 30000 }
     );
     
-    const result = JSON.parse(output);
+    const result: GmailGetResult = JSON.parse(output);
     const message = result.message || result;
     
     // Extract body content
@@ -108,22 +134,20 @@ async function fetchAndCache(account, messageId) {
     
     return { textBody, htmlBody };
   } catch (error) {
-    console.error(`Error fetching message ${messageId}:`, error.message);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`Error fetching message ${messageId}:`, errorMessage);
     return null;
   }
 }
 
 /**
  * Get email body content, using cache first
- * @param {string} account - Gmail account
- * @param {string} messageId - Email message ID
- * @returns {Promise<{textBody: string, htmlBody: string}|null>}
  */
-export async function getEmailBody(account, messageId) {
+export async function getEmailBody(account: string, messageId: string): Promise<EmailBody | null> {
   // Check cache first
   const cached = getCached(messageId);
   if (cached) {
-    return { textBody: cached.body_text, htmlBody: cached.body_html };
+    return { textBody: cached.body_text || '', htmlBody: cached.body_html || '' };
   }
   
   // Fetch and cache
@@ -132,20 +156,20 @@ export async function getEmailBody(account, messageId) {
 
 /**
  * Get email bodies in parallel with concurrency limit
- * @param {string} account - Gmail account
- * @param {string[]} messageIds - Array of message IDs
- * @param {number} concurrency - Max parallel requests (default 4)
- * @returns {Promise<Map<string, {textBody: string, htmlBody: string}>>}
  */
-export async function getEmailBodiesBatch(account, messageIds, concurrency = 4) {
-  const results = new Map();
+export async function getEmailBodiesBatch(
+  account: string, 
+  messageIds: string[], 
+  concurrency: number = 4
+): Promise<Map<string, EmailBody>> {
+  const results = new Map<string, EmailBody>();
   
   // Check cache first, collect misses
-  const misses = [];
+  const misses: string[] = [];
   for (const id of messageIds) {
     const cached = getCached(id);
     if (cached) {
-      results.set(id, { textBody: cached.body_text, htmlBody: cached.body_html });
+      results.set(id, { textBody: cached.body_text || '', htmlBody: cached.body_html || '' });
     } else {
       misses.push(id);
     }
@@ -158,7 +182,9 @@ export async function getEmailBodiesBatch(account, messageIds, concurrency = 4) 
   // Fetch misses in parallel batches
   for (let i = 0; i < misses.length; i += concurrency) {
     const batch = misses.slice(i, i + concurrency);
-    const promises = batch.map(id => fetchAndCache(account, id).then(r => ({ id, result: r })));
+    const promises = batch.map(id => 
+      fetchAndCache(account, id).then(result => ({ id, result }))
+    );
     
     const batchResults = await Promise.all(promises);
     
@@ -176,7 +202,7 @@ export async function getEmailBodiesBatch(account, messageIds, concurrency = 4) 
  * Get truncated body text for classification (max 1KB)
  * Strips HTML tags if only HTML is available
  */
-export function getTruncatedBody(bodyText, bodyHtml, maxLength = 1024) {
+export function getTruncatedBody(bodyText: string | null, bodyHtml: string | null, maxLength: number = 1024): string {
   let text = bodyText || '';
   
   // If no text body, strip HTML tags from HTML body
@@ -205,8 +231,8 @@ export function getTruncatedBody(bodyText, bodyHtml, maxLength = 1024) {
 /**
  * Get cache stats
  */
-export function getCacheStats() {
-  const db = getDb();
-  const total = db.prepare('SELECT COUNT(*) as count FROM email_cache').get();
+export function getCacheStats(): CacheStats {
+  const database = getDb();
+  const total = database.prepare('SELECT COUNT(*) as count FROM email_cache').get() as { count: number };
   return { totalCached: total.count };
 }

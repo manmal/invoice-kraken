@@ -2,14 +2,45 @@
  * gogcli wrapper
  */
 
-import { execSync, spawn } from 'child_process';
+import * as child_process from 'child_process';
+import type { GmailMessage } from '../types.js';
+
+interface GmailThread {
+  id: string;
+  historyId?: string;
+  messages?: GmailMessage[];
+  snippet?: string;
+}
+
+interface GogSearchResult {
+  threads?: GmailThread[];
+  nextPageToken?: string;
+}
+
+interface GogMessageResult {
+  message?: GmailMessage;
+}
+
+interface GogThreadResult {
+  thread?: GmailThread;
+}
+
+interface GogRawResult {
+  message?: { raw?: string };
+  raw?: string;
+}
+
+interface ExecError extends Error {
+  stdout?: string;
+  stderr?: string;
+}
 
 /**
  * Check if an account is configured in gog
  */
-export async function checkAccount(account) {
+export async function checkAccount(account: string): Promise<boolean> {
   try {
-    const output = execSync('gog auth list', { encoding: 'utf-8' });
+    const output = child_process.execSync('gog auth list', { encoding: 'utf-8' });
     const lines = output.trim().split('\n');
     
     for (const line of lines) {
@@ -20,7 +51,8 @@ export async function checkAccount(account) {
     }
     return false;
   } catch (error) {
-    console.error('Error checking gog account:', error.message);
+    const err = error as ExecError;
+    console.error('Error checking gog account:', err.message);
     return false;
   }
 }
@@ -28,9 +60,9 @@ export async function checkAccount(account) {
 /**
  * Search Gmail for emails matching query
  */
-export async function searchGmail(account, query, maxResults = 500) {
+export async function searchGmail(account: string, query: string, maxResults: number = 500): Promise<GmailThread[]> {
   try {
-    const output = execSync(
+    const output = child_process.execSync(
       `gog gmail search '${query.replace(/'/g, "'\\''")}' --account ${account} --output json --max ${maxResults}`,
       { encoding: 'utf-8', maxBuffer: 50 * 1024 * 1024 }
     );
@@ -39,10 +71,10 @@ export async function searchGmail(account, query, maxResults = 500) {
       return [];
     }
     
-    const result = JSON.parse(output);
+    const result = JSON.parse(output) as GogSearchResult | GmailThread[];
     
     // gog returns { threads: [...], nextPageToken: ... }
-    if (result.threads && Array.isArray(result.threads)) {
+    if ('threads' in result && result.threads && Array.isArray(result.threads)) {
       return result.threads;
     }
     
@@ -53,14 +85,17 @@ export async function searchGmail(account, query, maxResults = 500) {
     
     return [];
   } catch (error) {
-    if (error.stdout) {
+    const err = error as ExecError;
+    if (err.stdout) {
       try {
-        const result = JSON.parse(error.stdout);
-        if (result.threads) return result.threads;
+        const result = JSON.parse(err.stdout) as GogSearchResult | GmailThread[];
+        if ('threads' in result && result.threads) return result.threads;
         if (Array.isArray(result)) return result;
-      } catch {}
+      } catch {
+        // Ignore parse error
+      }
     }
-    console.error('Error searching Gmail:', error.message);
+    console.error('Error searching Gmail:', err.message);
     return [];
   }
 }
@@ -68,17 +103,18 @@ export async function searchGmail(account, query, maxResults = 500) {
 /**
  * Get full email message with body
  */
-export async function getMessage(account, messageId) {
+export async function getMessage(account: string, messageId: string): Promise<GmailMessage | null> {
   try {
-    const output = execSync(
+    const output = child_process.execSync(
       `gog gmail get ${messageId} --account ${account} --output json`,
       { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 }
     );
-    const result = JSON.parse(output);
+    const result = JSON.parse(output) as GogMessageResult | GmailMessage;
     // gog wraps the response in { message: {...} }
-    return result.message || result;
+    return ('message' in result && result.message) ? result.message : result as GmailMessage;
   } catch (error) {
-    console.error(`Error getting message ${messageId}:`, error.message);
+    const err = error as ExecError;
+    console.error(`Error getting message ${messageId}:`, err.message);
     return null;
   }
 }
@@ -86,17 +122,18 @@ export async function getMessage(account, messageId) {
 /**
  * Get thread with all messages
  */
-export async function getThread(account, threadId) {
+export async function getThread(account: string, threadId: string): Promise<GmailThread | null> {
   try {
-    const output = execSync(
+    const output = child_process.execSync(
       `gog gmail thread ${threadId} --account ${account} --output json`,
       { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 }
     );
-    const result = JSON.parse(output);
+    const result = JSON.parse(output) as GogThreadResult | GmailThread;
     // gog wraps the response
-    return result.thread || result;
+    return ('thread' in result && result.thread) ? result.thread : result as GmailThread;
   } catch (error) {
-    console.error(`Error getting thread ${threadId}:`, error.message);
+    const err = error as ExecError;
+    console.error(`Error getting thread ${threadId}:`, err.message);
     return null;
   }
 }
@@ -105,10 +142,10 @@ export async function getThread(account, threadId) {
  * Download attachment
  * Falls back to extracting from raw email if gog attachment command fails
  */
-export async function downloadAttachment(account, messageId, attachmentId, outputPath) {
+export async function downloadAttachment(account: string, messageId: string, attachmentId: string, outputPath: string): Promise<boolean> {
   // First try the gog attachment command
   try {
-    execSync(
+    child_process.execSync(
       `gog gmail attachment ${messageId} ${attachmentId} --account ${account} --out '${outputPath}'`,
       { encoding: 'utf-8', stdio: 'pipe' }
     );
@@ -122,7 +159,8 @@ export async function downloadAttachment(account, messageId, attachmentId, outpu
   try {
     return await downloadAttachmentFromRaw(account, messageId, outputPath);
   } catch (error) {
-    console.error(`Error downloading attachment:`, error.message);
+    const err = error as ExecError;
+    console.error(`Error downloading attachment:`, err.message);
     return false;
   }
 }
@@ -130,14 +168,14 @@ export async function downloadAttachment(account, messageId, attachmentId, outpu
 /**
  * Download attachment by extracting from raw email format
  */
-async function downloadAttachmentFromRaw(account, messageId, outputPath) {
+async function downloadAttachmentFromRaw(account: string, messageId: string, outputPath: string): Promise<boolean> {
   // Get raw email
-  const output = execSync(
+  const output = child_process.execSync(
     `gog gmail get ${messageId} --account ${account} --format raw --output json`,
     { encoding: 'utf-8', maxBuffer: 50 * 1024 * 1024 }
   );
   
-  const result = JSON.parse(output);
+  const result = JSON.parse(output) as GogRawResult;
   const rawBase64 = result.message?.raw || result.raw;
   
   if (!rawBase64) {
@@ -153,7 +191,7 @@ async function downloadAttachmentFromRaw(account, messageId, outputPath) {
   // - filename="Invoice.pdf"
   // - filename=Invoice.pdf (no quotes)
   // - filename on next line after Content-Disposition
-  let pdfMatch = rawEmail.match(/Content-Disposition:\s*attachment;\s*filename="([^"]+\.pdf)"/i);
+  let pdfMatch: RegExpMatchArray | null = rawEmail.match(/Content-Disposition:\s*attachment;\s*filename="([^"]+\.pdf)"/i);
   
   if (!pdfMatch) {
     // Try without quotes
@@ -169,7 +207,7 @@ async function downloadAttachmentFromRaw(account, messageId, outputPath) {
     throw new Error('No PDF attachment found in raw email');
   }
   
-  const filename = pdfMatch[1];
+  // filename available in pdfMatch[1] if needed
   
   // Find the boundary that contains this attachment
   const boundaryMatch = rawEmail.match(/boundary="([^"]+)"/);
@@ -214,7 +252,7 @@ async function downloadAttachmentFromRaw(account, messageId, outputPath) {
 /**
  * Build Gmail search query for invoice-related emails in a date range
  */
-export function buildInvoiceQuery(year, month) {
+export function buildInvoiceQuery(year: number, month: number): string {
   const terms = [
     'invoice',
     'rechnung', 
