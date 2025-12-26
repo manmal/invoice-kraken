@@ -82,6 +82,7 @@ For each email, determine:
    - Invoice number
    - Amount (with currency, e.g., "149.00 €")
    - Invoice date (YYYY-MM-DD format)
+   - Vendor/product name for filename (e.g., "1password_family", "anthropic_api", "hetzner_cloud", "apple_icloud", "spusu_mobile")
 4. Tax deductibility for Austrian freelance software developer:
    
    CONTEXT: The freelancer has a COMPANY CAR (Firmen-KFZ), so car-related expenses ARE deductible.
@@ -117,6 +118,7 @@ Return ONLY a valid JSON array (no markdown, no explanation) with this structure
   "invoice_number": "string or null",
   "amount": "string or null (e.g., '149.00 €')",
   "invoice_date": "YYYY-MM-DD or null",
+  "vendor_product": "snake_case name for filename (e.g., 'anthropic_api', 'hetzner_cloud')",
   "deductible": "full"|"partial"|"none"|"unclear",
   "deductible_reason": "brief explanation",
   "deductible_percent": number or null,

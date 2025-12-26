@@ -149,7 +149,21 @@ async function downloadAttachmentFromRaw(account, messageId, outputPath) {
   
   // Find PDF attachment in the raw email
   // Look for Content-Disposition: attachment with .pdf filename
-  const pdfMatch = rawEmail.match(/Content-Disposition:\s*attachment;\s*filename="([^"]+\.pdf)"/i);
+  // Handle both inline and multiline formats:
+  // - filename="Invoice.pdf"
+  // - filename=Invoice.pdf (no quotes)
+  // - filename on next line after Content-Disposition
+  let pdfMatch = rawEmail.match(/Content-Disposition:\s*attachment;\s*filename="([^"]+\.pdf)"/i);
+  
+  if (!pdfMatch) {
+    // Try without quotes
+    pdfMatch = rawEmail.match(/Content-Disposition:\s*attachment;\s*filename=([^\s;]+\.pdf)/i);
+  }
+  
+  if (!pdfMatch) {
+    // Try multiline format (filename on next line)
+    pdfMatch = rawEmail.match(/Content-Disposition:\s*attachment;\s*[\r\n]+\s*filename="?([^"\s;]+\.pdf)"?/i);
+  }
   
   if (!pdfMatch) {
     throw new Error('No PDF attachment found in raw email');

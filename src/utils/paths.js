@@ -20,15 +20,24 @@ export function ensureDir(dirPath) {
 }
 
 /**
- * Sanitize a string for use in filenames
+ * Sanitize a string for use in filenames (snake_case)
  */
 export function sanitizeFilename(name) {
   return name
     .toLowerCase()
-    .replace(/[^a-z0-9äöüß\s-]/gi, '')
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-+|-+$/g, '')
+    // Replace German umlauts
+    .replace(/ä/g, 'ae')
+    .replace(/ö/g, 'oe')
+    .replace(/ü/g, 'ue')
+    .replace(/ß/g, 'ss')
+    // Remove non-alphanumeric except spaces and hyphens
+    .replace(/[^a-z0-9\s-]/gi, '')
+    // Replace spaces and hyphens with underscores for snake_case
+    .replace(/[\s-]+/g, '_')
+    // Remove multiple underscores
+    .replace(/_+/g, '_')
+    // Remove leading/trailing underscores
+    .replace(/^_+|_+$/g, '')
     .substring(0, 50) || 'unknown';
 }
 

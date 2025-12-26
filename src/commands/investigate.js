@@ -251,7 +251,7 @@ async function handlePdfAttachment(email, analysis, account, stats, extra) {
   // Download attachment
   const outputPath = getInvoiceOutputPath(
     analysis.invoice_date || email.date,
-    email.sender_domain || email.sender,
+    analysis.vendor_product || email.sender_domain || email.sender,
     analysis.invoice_number
   );
   
@@ -330,7 +330,7 @@ async function handleTextInvoice(email, analysis, account, stats, extra) {
   // Generate PDF
   const outputPath = getInvoiceOutputPath(
     analysis.invoice_date || email.date,
-    email.sender_domain || email.sender,
+    analysis.vendor_product || email.sender_domain || email.sender,
     analysis.invoice_number
   );
   
