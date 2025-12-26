@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="Kraxler" width="200">
+</p>
+
 # 🇦🇹 Kraxler
 
 Extract invoices from Gmail with AI-powered classification for 🇦🇹 Austrian tax deductions.

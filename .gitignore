@@ -46,5 +46,5 @@ bun.lock
 
 # Generated/temp files
 email-tax-analysis.json
-assets/
+# assets/ - keep logo.png
 scripts/
