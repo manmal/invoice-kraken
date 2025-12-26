@@ -16,6 +16,7 @@ import { listCommand } from './commands/list.js';
 import { statusCommand } from './commands/status.js';
 import { logCommand } from './commands/log.js';
 import { configCommand } from './commands/config.js';
+import { modelsCommand } from './commands/models.js';
 import { closeDb } from './lib/db.js';
 import { needsSetup, runSetupWizard } from './lib/config.js';
 
@@ -145,6 +146,19 @@ program
   .action(async (options) => {
     try {
       await configCommand(options);
+    } catch (error) {
+      console.error('Error:', error.message);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('models')
+  .description('View AI model configuration')
+  .option('--check', 'Check if authentication is working')
+  .action(async (options) => {
+    try {
+      await modelsCommand(options);
     } catch (error) {
       console.error('Error:', error.message);
       process.exit(1);

@@ -14,7 +14,7 @@ import {
 } from '../lib/db.js';
 import { prefilterEmails } from '../lib/prefilter.js';
 import { getMessage, downloadAttachment } from '../lib/gog.js';
-import { analyzeEmailsForInvoices } from '../lib/pi.js';
+import { analyzeEmailsForInvoices, checkAuth } from '../lib/ai.js';
 import { extractInvoiceData, parseAmountToCents } from '../lib/extract.js';
 import { classifyDeductibility } from '../lib/vendors.js';
 import { generatePdfFromText } from '../lib/pdf.js';
@@ -26,6 +26,13 @@ export async function investigateCommand(options) {
   
   console.log(`Investigating emails for account: ${account}`);
   console.log(`Batch size: ${batchSize}, Auto-dedup: ${autoDedup}, Strict: ${strict}\n`);
+  
+  // Check authentication before starting
+  const authError = await checkAuth();
+  if (authError) {
+    console.error(authError);
+    process.exit(1);
+  }
   
   // Get pending emails
   const db = getDb();

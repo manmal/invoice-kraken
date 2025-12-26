@@ -10,7 +10,7 @@ import {
   updateEmailStatus,
   findDuplicateByHash,
 } from '../lib/db.js';
-import { downloadInvoiceWithPi } from '../lib/pi.js';
+import { downloadInvoiceWithBrowser, checkAuth } from '../lib/ai.js';
 import { hashFile } from '../utils/hash.js';
 import { getInvoiceOutputPath } from '../utils/paths.js';
 
@@ -31,6 +31,13 @@ export async function downloadCommand(options) {
   }
   
   console.log(`Found ${pendingEmails.length} invoices pending download.\n`);
+  
+  // Check authentication before starting
+  const authError = await checkAuth();
+  if (authError) {
+    console.error(authError);
+    process.exit(1);
+  }
   
   let stats = {
     downloaded: 0,
@@ -54,10 +61,10 @@ export async function downloadCommand(options) {
         email.invoice_number
       );
       
-      console.log(`  Attempting download with pi + browser...`);
+      console.log(`  Attempting download with browser automation...`);
       
-      // Use pi to download
-      const result = await downloadInvoiceWithPi(email, outputPath);
+      // Use browser automation to download
+      const result = await downloadInvoiceWithBrowser(email, outputPath);
       
       if (result.success && result.path) {
         // Check if file exists
