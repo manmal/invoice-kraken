@@ -13,6 +13,7 @@ import { scanCommand } from './commands/scan.js';
 import { extractCommand } from './commands/extract.js';
 import { crawlCommand } from './commands/crawl.js';
 import { reviewCommand } from './commands/review.js';
+import { reportCommand } from './commands/report.js';
 import { runCommand } from './commands/run.js';
 import { statusCommand } from './commands/status.js';
 import { logCommand } from './commands/log.js';
@@ -118,8 +119,31 @@ program
   });
 
 program
+  .command('report')
+  .description('Stage 5: Generate JSONL/JSON/CSV report of extracted invoices')
+  .requiredOption('-a, --account <email>', 'Gmail account to use')
+  .option('-y, --year <year>', 'Year to report (e.g., 2025)')
+  .option('-m, --month <month>', 'Month to report (e.g., 2025-12)')
+  .option('-q, --quarter <quarter>', 'Quarter to report (e.g., 2025-Q4)')
+  .option('--from <date>', 'Start date (YYYY-MM-DD)')
+  .option('--to <date>', 'End date (YYYY-MM-DD)')
+  .option('-o, --output <file>', 'Output file path')
+  .option('-f, --format <format>', 'Output format: jsonl, json, csv', 'jsonl')
+  .option('--status <status>', 'Filter by status: downloaded, manual, all', 'downloaded')
+  .action(async (options: any): Promise<void> => {
+    try {
+      await reportCommand(options);
+    } catch (error: unknown) {
+      console.error('Error:', (error as Error).message);
+      process.exit(1);
+    } finally {
+      closeDb();
+    }
+  });
+
+program
   .command('run')
-  .description('Run full pipeline: scan → extract → crawl → review')
+  .description('Run full pipeline: scan → extract → crawl → review → report')
   .requiredOption('-a, --account <email>', 'Gmail account to use')
   .option('-y, --year <year>', 'Year to process (e.g., 2025)')
   .option('-m, --month <month>', 'Month to process (e.g., 2025-12)')
@@ -230,7 +254,7 @@ program
 // SETUP & ERROR HANDLING
 // ============================================================================
 
-const setupRequiredCommands: string[] = ['scan', 'extract', 'crawl', 'review', 'run', 'status'];
+const setupRequiredCommands: string[] = ['scan', 'extract', 'crawl', 'review', 'report', 'run', 'status'];
 const originalParse = program.parse.bind(program);
 (program as any).parse = async function(args?: readonly string[]): Promise<Command> {
   const allArgs: readonly string[] = args || process.argv;

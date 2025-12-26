@@ -14,7 +14,7 @@ npm install -g kraxler
 npx kraxler run -a your@gmail.com --year 2025
 ```
 
-## The 4-Stage Pipeline
+## The 5-Stage Pipeline
 
 ```
 1. kraxler scan -a your@gmail.com --year 2025
@@ -34,6 +34,10 @@ npx kraxler run -a your@gmail.com --year 2025
 4. kraxler review -a your@gmail.com
    └── Shows items needing manual handling
    └── Displays tax deductibility summary
+
+5. kraxler report -a your@gmail.com --year 2025
+   └── Generates JSONL/JSON/CSV export of all invoices
+   └── Includes deductibility classification
 ```
 
 Or run all stages at once:
@@ -44,7 +48,7 @@ npx kraxler run -a your@gmail.com --year 2025
 
 ## Date Range Options
 
-All date options work with `scan` and `run` commands:
+All date options work with `scan`, `report`, and `run` commands:
 
 ```bash
 # Full year
@@ -98,6 +102,14 @@ invoices/
 │       └── 03-github-copilot.pdf
 ```
 
+Report exports (JSONL by default):
+
+```bash
+npx kraxler report -a your@gmail.com --year 2025 -f jsonl  # Default
+npx kraxler report -a your@gmail.com --year 2025 -f json   # Pretty JSON
+npx kraxler report -a your@gmail.com --year 2025 -f csv    # Spreadsheet
+```
+
 ## Tax Classification
 
 | Category  | Icon | Income Tax | VAT Recovery | Examples                     |
@@ -139,11 +151,12 @@ npx kraxler extract -a x@gmail.com --model gemini-2.5-flash --provider google
 
 ```bash
 # Pipeline
-npx kraxler run      # Full pipeline
+npx kraxler run      # Full pipeline (all 5 stages)
 npx kraxler scan     # Stage 1: Find emails
 npx kraxler extract  # Stage 2: Download attachments, classify
 npx kraxler crawl    # Stage 3: Browser download for links
 npx kraxler review   # Stage 4: Show manual items
+npx kraxler report   # Stage 5: Generate invoice export
 
 # Utility
 npx kraxler status   # Completion status by month

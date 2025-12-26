@@ -1,11 +1,12 @@
 /**
- * Run command - Execute the full pipeline: scan → extract → crawl → review
+ * Run command - Execute the full pipeline: scan → extract → crawl → review → report
  */
 
 import { scanCommand } from './scan.js';
 import { extractCommand } from './extract.js';
 import { crawlCommand } from './crawl.js';
 import { reviewCommand } from './review.js';
+import { reportCommand } from './report.js';
 import { closeBrowser } from '../lib/browser.js';
 import { parseDateRange, getYearMonth } from '../lib/dates.js';
 import type { RunOptions } from '../types.js';
@@ -31,6 +32,7 @@ export async function runCommand(options: RunOptions): Promise<void> {
   console.log(`Period: ${dateRange.display}\n`);
   
   const startTime: number = Date.now();
+  let reportPath: string | null = null;
   
   try {
     // Stage 1: Scan
@@ -83,6 +85,18 @@ export async function runCommand(options: RunOptions): Promise<void> {
       includeDuplicates: false,
     });
     
+    console.log('\n');
+    
+    // Stage 5: Report
+    console.log('┌────────────────────────────────────────────────────────────────────────────┐');
+    console.log('│  STAGE 5: REPORT                                                           │');
+    console.log('└────────────────────────────────────────────────────────────────────────────┘\n');
+    
+    reportPath = await reportCommand({
+      ...options, // Pass through date options (includes account)
+      format: 'jsonl',
+    });
+    
   } finally {
     await closeBrowser();
   }
@@ -93,7 +107,11 @@ export async function runCommand(options: RunOptions): Promise<void> {
   console.log('║  ✅ PIPELINE COMPLETE                                                       ║');
   console.log('╚════════════════════════════════════════════════════════════════════════════╝');
   console.log(`\nTotal time: ${duration}s`);
-  console.log(`\nInvoices saved to: ./invoices/`);
+  console.log(`\nOutputs:`);
+  console.log(`  📁 Invoices: ./invoices/`);
+  if (reportPath) {
+    console.log(`  📄 Report: ${reportPath}`);
+  }
   console.log(`\nNext steps:`);
   console.log(`  • Review any manual items listed above`);
   console.log(`  • Run "kraxler review -a ${account} --summary" for tax summary`);
