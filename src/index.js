@@ -13,11 +13,13 @@ import { scanCommand } from './commands/scan.js';
 import { extractCommand } from './commands/extract.js';
 import { crawlCommand } from './commands/crawl.js';
 import { reviewCommand } from './commands/review.js';
+import { runCommand } from './commands/run.js';
 import { statusCommand } from './commands/status.js';
 import { logCommand } from './commands/log.js';
 import { configCommand } from './commands/config.js';
 import { modelsCommand } from './commands/models.js';
 import { closeDb } from './lib/db.js';
+import { closeBrowser } from './lib/browser.js';
 import { needsSetup, runSetupWizard } from './lib/config.js';
 import { printPaths, getAllPaths } from './lib/paths.js';
 import { setModelOverrides } from './lib/models.js';
@@ -115,6 +117,36 @@ program
     }
   });
 
+program
+  .command('run')
+  .description('Run full pipeline: scan → extract → crawl → review')
+  .requiredOption('-a, --account <email>', 'Gmail account to use')
+  .requiredOption('-y, --year <year>', 'Year to process (e.g., 2024)')
+  .option('--from <month>', 'Start month (1-12, default: 1)', '1')
+  .option('--to <month>', 'End month (1-12, default: 12)', '12')
+  .option('-b, --batch-size <n>', 'Number of emails to process per batch', '10')
+  .option('--auto-dedup', 'Automatically mark high-confidence duplicates')
+  .option('--strict', 'Also auto-mark medium-confidence duplicates')
+  .option('--model <id>', 'Override AI model (e.g., gemini-2.5-flash, gpt-4o)')
+  .option('--provider <name>', 'Override AI provider (e.g., google, openai, anthropic)')
+  .action(async (options) => {
+    try {
+      if (options.model || options.provider) {
+        setModelOverrides({ model: options.model, provider: options.provider });
+      }
+      options.fromMonth = parseInt(options.from, 10);
+      options.toMonth = parseInt(options.to, 10);
+      options.batchSize = parseInt(options.batchSize, 10);
+      await runCommand(options);
+    } catch (error) {
+      console.error('Error:', error.message);
+      process.exit(1);
+    } finally {
+      await closeBrowser();
+      closeDb();
+    }
+  });
+
 // ============================================================================
 // UTILITY COMMANDS
 // ============================================================================
@@ -198,7 +230,7 @@ program
 // SETUP & ERROR HANDLING
 // ============================================================================
 
-const setupRequiredCommands = ['scan', 'extract', 'crawl', 'review', 'status'];
+const setupRequiredCommands = ['scan', 'extract', 'crawl', 'review', 'run', 'status'];
 const originalParse = program.parse.bind(program);
 program.parse = async function(args) {
   const allArgs = args || process.argv;
