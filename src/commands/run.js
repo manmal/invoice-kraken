@@ -24,7 +24,7 @@ export async function runCommand(options) {
   const fromYM = getYearMonth(dateRange.from);
   
   console.log('╔════════════════════════════════════════════════════════════════════════════╗');
-  console.log('║  🦑 KRAXLER - Full Pipeline                                                ║');
+  console.log('║  🇦🇹 KRAXLER - Full Pipeline                                                ║');
   console.log('╚════════════════════════════════════════════════════════════════════════════╝');
   console.log(`\nAccount: ${account}`);
   console.log(`Period: ${dateRange.display}\n`);

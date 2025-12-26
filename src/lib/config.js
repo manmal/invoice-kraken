@@ -158,7 +158,7 @@ export async function runSetupWizard() {
   
   console.log(`
 ╔════════════════════════════════════════════════════════════════════════════╗
-║                        🦑 INVOICE KRAKEN SETUP                             ║
+║                        🇦🇹 INVOICE KRAKEN SETUP                             ║
 ╠════════════════════════════════════════════════════════════════════════════╣
 ║                                                                            ║
 ║  ⚠️  IMPORTANT DISCLAIMER                                                  ║
@@ -332,7 +332,7 @@ export function printConfig() {
   
   console.log(`
 ╔════════════════════════════════════════════════════════════════════════════╗
-║  🦑 INVOICE KRAKEN CONFIGURATION                                          ║
+║  🇦🇹 INVOICE KRAKEN CONFIGURATION                                          ║
 ╠════════════════════════════════════════════════════════════════════════════╣`);
   
   console.log(`║  Tax jurisdiction: Austria (AT)                                            ║`);
