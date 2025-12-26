@@ -4,13 +4,20 @@
  * 
  * IMPORTANT AUSTRIAN TAX RULES:
  * 1. Income Tax (EST) and VAT (USt) deductibility are SEPARATE
- * 2. PKW/Kombi: NO Vorsteuerabzug in Austria (special rule!)
+ * 2. PKW/Kombi: NO Vorsteuerabzug in Austria (except electric vehicles!)
  * 3. Business meals: 50% income tax, 100% VAT
- * 4. Phone/Internet: Business portion only (typically 50%)
+ * 4. Phone/Internet: Business portion only (configurable, default 50%)
  * 5. Kleinunternehmer (< €55k revenue): No VAT recovery at all
  * 
  * See: docs/austrian-tax-deductibility.md for details
  */
+
+import { 
+  getVehicleVatRecovery, 
+  getTelecomBusinessPercent, 
+  isKleinunternehmer,
+  loadConfig 
+} from './config.js';
 
 /**
  * Deductibility types with Austrian tax rules
@@ -317,55 +324,62 @@ export const KNOWN_VENDORS = {
 /**
  * Classify deductibility based on sender domain and subject
  * Returns detailed Austrian tax classification
+ * Uses user config for vehicle VAT and telecom percentages
  */
 export function classifyDeductibility(senderDomain, subject = '', body = '') {
   const textToCheck = `${senderDomain} ${subject} ${body}`.toLowerCase();
   
-  // Check vehicle expenses first (special Austrian rules - NO VAT!)
+  // Check if user is Kleinunternehmer (no VAT recovery at all)
+  const kleinunternehmer = isKleinunternehmer();
+  
+  // Get vehicle VAT status from config (depends on electric vs ICE)
+  const vehicleVat = getVehicleVatRecovery();
+  
+  // Check vehicle expenses first
   for (const vendor of KNOWN_VENDORS.vehicle) {
     if (vendor.domain && senderDomain?.includes(vendor.domain)) {
       return {
         deductible: 'vehicle',
         type: DEDUCTIBILITY_TYPES.vehicle,
-        reason: `${vendor.name} - ${vendor.category} (PKW: no VAT recovery in Austria)`,
+        reason: `${vendor.name} - ${vendor.category} (${vehicleVat.reason})`,
         income_tax_percent: 100,
-        vat_recoverable: false,
+        vat_recoverable: kleinunternehmer ? false : (vehicleVat.recoverable === true),
       };
     }
     if (vendor.pattern && vendor.pattern.test(textToCheck)) {
       return {
         deductible: 'vehicle',
         type: DEDUCTIBILITY_TYPES.vehicle,
-        reason: `${vendor.name || vendor.category} (PKW: no VAT recovery in Austria)`,
+        reason: `${vendor.name || vendor.category} (${vehicleVat.reason})`,
         income_tax_percent: 100,
-        vat_recoverable: false,
+        vat_recoverable: kleinunternehmer ? false : (vehicleVat.recoverable === true),
       };
     }
   }
   
-  // Check business meals (50% income tax, 100% VAT)
+  // Check business meals (50% income tax, 100% VAT - unless Kleinunternehmer)
   for (const vendor of KNOWN_VENDORS.meals) {
     if (vendor.domain && senderDomain?.includes(vendor.domain)) {
       return {
         deductible: 'meals',
         type: DEDUCTIBILITY_TYPES.meals,
-        reason: `${vendor.name} - ${vendor.category} (50% EST, 100% VAT)`,
+        reason: `${vendor.name} - ${vendor.category} (50% EST${kleinunternehmer ? '' : ', 100% VAT'})`,
         income_tax_percent: 50,
-        vat_recoverable: true,
+        vat_recoverable: kleinunternehmer ? false : true,
       };
     }
     if (vendor.pattern && vendor.pattern.test(textToCheck)) {
       return {
         deductible: 'meals',
         type: DEDUCTIBILITY_TYPES.meals,
-        reason: `${vendor.name || vendor.category} (50% EST, 100% VAT)`,
+        reason: `${vendor.name || vendor.category} (50% EST${kleinunternehmer ? '' : ', 100% VAT'})`,
         income_tax_percent: 50,
-        vat_recoverable: true,
+        vat_recoverable: kleinunternehmer ? false : true,
       };
     }
   }
   
-  // Check full deductibility (100% income tax + VAT)
+  // Check full deductibility (100% income tax + VAT - unless Kleinunternehmer)
   for (const vendor of KNOWN_VENDORS.full) {
     if (vendor.domain && senderDomain?.includes(vendor.domain)) {
       return {
@@ -373,7 +387,7 @@ export function classifyDeductibility(senderDomain, subject = '', body = '') {
         type: DEDUCTIBILITY_TYPES.full,
         reason: `${vendor.name} - ${vendor.category}`,
         income_tax_percent: 100,
-        vat_recoverable: true,
+        vat_recoverable: kleinunternehmer ? false : true,
       };
     }
     if (vendor.pattern && vendor.pattern.test(textToCheck)) {
@@ -382,29 +396,31 @@ export function classifyDeductibility(senderDomain, subject = '', body = '') {
         type: DEDUCTIBILITY_TYPES.full,
         reason: `${vendor.name || vendor.category}`,
         income_tax_percent: 100,
-        vat_recoverable: true,
+        vat_recoverable: kleinunternehmer ? false : true,
       };
     }
   }
   
-  // Check telecom (partial - typically 50%)
+  // Check telecom (partial - use configured percentage)
+  const telecomPercent = getTelecomBusinessPercent();
+  
   for (const vendor of KNOWN_VENDORS.telecom) {
     if (vendor.domain && senderDomain?.includes(vendor.domain)) {
       return {
         deductible: 'telecom',
         type: DEDUCTIBILITY_TYPES.telecom,
-        reason: `${vendor.name} - ${vendor.category} (${vendor.percent || 50}% business use)`,
-        income_tax_percent: vendor.percent || 50,
-        vat_recoverable: true,
+        reason: `${vendor.name} - ${vendor.category} (${telecomPercent}% business use)`,
+        income_tax_percent: telecomPercent,
+        vat_recoverable: kleinunternehmer ? false : true,
       };
     }
     if (vendor.pattern && vendor.pattern.test(textToCheck)) {
       return {
         deductible: 'telecom',
         type: DEDUCTIBILITY_TYPES.telecom,
-        reason: `${vendor.category} (${vendor.percent || 50}% business use)`,
-        income_tax_percent: vendor.percent || 50,
-        vat_recoverable: true,
+        reason: `${vendor.category} (${telecomPercent}% business use)`,
+        income_tax_percent: telecomPercent,
+        vat_recoverable: kleinunternehmer ? false : true,
       };
     }
   }

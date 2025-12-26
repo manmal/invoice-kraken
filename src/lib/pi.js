@@ -4,6 +4,7 @@
 
 import { spawn } from 'child_process';
 import fs from 'fs';
+import { loadConfig, getVehicleVatRecovery, getTelecomBusinessPercent, isKleinunternehmer } from './config.js';
 
 /**
  * Run pi with a prompt and return the result
@@ -60,6 +61,12 @@ export async function runPi(prompt, options = {}) {
  * Analyze emails for invoice classification using pi scout
  */
 export async function analyzeEmailsForInvoices(emails) {
+  // Get user config for context
+  const config = loadConfig();
+  const vehicleVat = getVehicleVatRecovery();
+  const telecomPercent = getTelecomBusinessPercent();
+  const kleinunternehmer = isKleinunternehmer();
+  
   const emailsJson = JSON.stringify(emails.map(e => ({
     id: e.id,
     subject: e.subject,
@@ -69,7 +76,28 @@ export async function analyzeEmailsForInvoices(emails) {
     hasAttachment: e.raw_json ? JSON.parse(e.raw_json).payload?.parts?.some(p => p.filename) : false,
   })), null, 2);
   
+  // Build context based on user config
+  let vehicleContext = 'No company car configured';
+  if (config.has_company_car) {
+    if (config.company_car_type === 'electric') {
+      vehicleContext = 'ELECTRIC company car - FULL VAT recovery on vehicle expenses!';
+    } else if (config.company_car_type === 'hybrid_plugin') {
+      vehicleContext = 'Plug-in hybrid company car - partial VAT recovery (check with Steuerberater)';
+    } else {
+      vehicleContext = 'ICE/Hybrid company car - NO VAT recovery on vehicle expenses (Austrian rule)';
+    }
+  }
+  
+  const vatContext = kleinunternehmer 
+    ? 'User is KLEINUNTERNEHMER - NO VAT recovery on ANY expenses!'
+    : 'User is NOT Kleinunternehmer - VAT recovery applies per category';
+  
   const prompt = `Analyze these emails and categorize each one for invoice processing.
+
+USER CONFIGURATION:
+- ${vehicleContext}
+- ${vatContext}
+- Telecom/internet business use: ${telecomPercent}%
 
 For each email, determine:
 1. Does it contain an invoice? (yes/no/uncertain)
@@ -87,32 +115,33 @@ For each email, determine:
    
    IMPORTANT AUSTRIAN TAX RULES:
    - Income Tax (EST) and VAT (Vorsteuer) deductibility are SEPARATE
-   - The freelancer has a COMPANY CAR (Firmen-KFZ)
-   - PKW/Kombi in Austria: NO Vorsteuerabzug (VAT recovery) regardless of business use!
-   - Business meals: 50% income tax, but 100% VAT recovery
+   ${config.has_company_car ? `- Company car type: ${config.company_car_type?.toUpperCase()}` : '- No company car'}
+   - ${vehicleVat.reason}
+   - Business meals: 50% income tax, but 100% VAT recovery${kleinunternehmer ? ' (except Kleinunternehmer!)' : ''}
    
    Categories:
-   - full: 100% income tax + 100% VAT recovery:
+   - full: 100% income tax + ${kleinunternehmer ? 'NO' : '100%'} VAT recovery:
      * Software, cloud services, dev tools, hosting, domains
      * Professional services (accountant, legal)
      * Hardware for work (computers, monitors, keyboards)
      * Education (tech courses, books, conferences)
    
-   - vehicle: 100% income tax BUT NO VAT recovery (Austrian PKW rule!):
+   - vehicle: 100% income tax, ${vehicleVat.recoverable ? 'WITH' : 'NO'} VAT recovery:
      * Fuel/petrol (Tankstelle: OMV, BP, Shell, etc.)
      * Car service/repair, car wash
      * Tolls (ASFINAG), Vignette
      * ÖAMTC, ARBÖ membership
      * Parking (business)
      * Car insurance
+     ${vehicleVat.recoverable ? '* Electric vehicle = full VAT recovery!' : '* ICE/Hybrid = no VAT recovery (Austrian rule)'}
    
-   - meals: 50% income tax, 100% VAT recovery:
+   - meals: 50% income tax, ${kleinunternehmer ? 'NO' : '100%'} VAT recovery:
      * Business meals with clients
      * Restaurant expenses for business purposes
    
-   - telecom: Partial (typically 50%) for both EST and VAT:
+   - telecom: ${telecomPercent}% for both EST and VAT:
      * Mobile phone (A1, Magenta, Drei, spusu, etc.)
-     * Internet (~50-60% business use)
+     * Internet (${telecomPercent}% business use)
    
    - none: Not deductible (personal):
      * Entertainment (Netflix, Spotify, streaming)

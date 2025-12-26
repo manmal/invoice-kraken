@@ -39,3 +39,4 @@ coverage/
 # Temp files
 tmp/
 .tmp/
+.invoice-kraken/

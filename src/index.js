@@ -2,6 +2,10 @@
 
 /**
  * Invoice Kraken - Search Gmail for invoices using gogcli and pi's scout/browser skills
+ * 
+ * ⚠️  DISCLAIMER: This tool provides tax deductibility suggestions based on the
+ * AUSTRIAN TAX SYSTEM. These are for informational purposes only and do NOT
+ * constitute tax advice. Always consult a qualified Steuerberater.
  */
 
 import { Command } from 'commander';
@@ -11,7 +15,9 @@ import { downloadCommand } from './commands/download.js';
 import { listCommand } from './commands/list.js';
 import { statusCommand } from './commands/status.js';
 import { logCommand } from './commands/log.js';
+import { configCommand } from './commands/config.js';
 import { closeDb } from './lib/db.js';
+import { needsSetup, runSetupWizard } from './lib/config.js';
 
 const program = new Command();
 
@@ -129,6 +135,36 @@ program
       closeDb();
     }
   });
+
+program
+  .command('config')
+  .description('View or update configuration (tax settings, company car, etc.)')
+  .option('--reset', 'Reset configuration and run setup wizard again')
+  .option('--show', 'Show current configuration')
+  .option('--set <key=value>', 'Set a specific configuration value')
+  .action(async (options) => {
+    try {
+      await configCommand(options);
+    } catch (error) {
+      console.error('Error:', error.message);
+      process.exit(1);
+    }
+  });
+
+// Check for first-run setup before any command that needs config
+const setupRequiredCommands = ['search', 'investigate', 'download', 'list', 'status'];
+const originalParse = program.parse.bind(program);
+program.parse = async function(args) {
+  // Check if running a command that needs setup
+  const commandArg = args?.[2] || process.argv[2];
+  
+  if (setupRequiredCommands.includes(commandArg) && needsSetup()) {
+    console.log('First run detected. Running initial setup...\n');
+    await runSetupWizard();
+  }
+  
+  return originalParse(args);
+};
 
 // Handle uncaught errors
 process.on('uncaughtException', (error) => {
