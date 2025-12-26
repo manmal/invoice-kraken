@@ -154,8 +154,7 @@ program
 
 program
   .command('models')
-  .description('View AI model configuration')
-  .option('--check', 'Check if authentication is working')
+  .description('View AI model configuration and auth status')
   .action(async (options) => {
     try {
       await modelsCommand(options);

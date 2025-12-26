@@ -158,14 +158,13 @@ bun src/index.js config --set company_car_type=electric
 bun src/index.js config --set telecom_business_percent=70
 ```
 
-### 7. View AI model configuration
+### 7. View AI models and auth status
 
 ```bash
 bun src/index.js models
-
-# Check if authentication is working
-bun src/index.js models --check
 ```
+
+Shows configured models per task and authentication status.
 
 ## Output Structure
 

@@ -1,21 +1,18 @@
 /**
- * Models command - View and configure AI models
+ * Models command - View AI model configuration and auth status
  */
 
 import { MODEL_CONFIG, listModelConfig } from '../lib/models.js';
 import { checkAuth } from '../lib/ai.js';
 
 export async function modelsCommand(options) {
-  const { check } = options;
+  // Always check auth and show status
+  const authError = await checkAuth();
   
-  if (check) {
-    console.log('Checking authentication...\n');
-    const authError = await checkAuth();
-    if (authError) {
-      console.error(authError);
-      process.exit(1);
-    }
-    console.log('✓ Authentication OK - Anthropic models are available.\n');
+  if (authError) {
+    console.error(authError);
+  } else {
+    console.log('✓ Authentication OK\n');
   }
   
   listModelConfig();

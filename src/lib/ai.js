@@ -11,10 +11,15 @@
 import {
   discoverAuthStorage,
   discoverModels,
+  AuthStorage,
+  ModelRegistry,
   SessionManager,
   SettingsManager,
   createAgentSession,
 } from '@mariozechner/pi-coding-agent';
+import path from 'path';
+import os from 'os';
+import fs from 'fs';
 import { getModelForTask, MODEL_CONFIG } from './models.js';
 import { loadConfig, getVehicleVatRecovery, getTelecomBusinessPercent, isKleinunternehmer } from './config.js';
 
@@ -22,11 +27,30 @@ let authStorage = null;
 let modelRegistry = null;
 
 /**
+ * Get the pi agent directory
+ */
+function getAgentDir() {
+  return path.join(os.homedir(), '.pi', 'agent');
+}
+
+/**
  * Initialize auth storage and model registry
+ * pi stores OAuth tokens in oauth.json (not auth.json)
  */
 function initAuth() {
   if (!authStorage) {
-    authStorage = discoverAuthStorage();
+    // pi stores OAuth in oauth.json, not auth.json
+    const agentDir = getAgentDir();
+    const oauthPath = path.join(agentDir, 'oauth.json');
+    
+    // Check if oauth.json exists and use it
+    if (fs.existsSync(oauthPath)) {
+      authStorage = new AuthStorage(oauthPath);
+    } else {
+      // Fall back to standard discovery
+      authStorage = discoverAuthStorage();
+    }
+    
     modelRegistry = discoverModels(authStorage);
   }
   return { authStorage, modelRegistry };
