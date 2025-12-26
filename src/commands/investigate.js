@@ -153,11 +153,11 @@ async function processEmail(email, analysis, account, options, stats) {
     
     if (invoiceType === 'pdf_attachment') {
       await handlePdfAttachment(email, analysis, account, stats, {
-        deductible, deductibleReason, deductiblePercent, amountCents
+        deductible, deductible_reason: deductibleReason, deductible_percent: deductiblePercent, invoice_amount_cents: amountCents
       });
     } else if (invoiceType === 'text') {
       await handleTextInvoice(email, analysis, account, stats, {
-        deductible, deductibleReason, deductiblePercent, amountCents
+        deductible, deductible_reason: deductibleReason, deductible_percent: deductiblePercent, invoice_amount_cents: amountCents
       });
     } else if (invoiceType === 'link') {
       updateEmailStatus(email.id, account, 'pending_download', {
@@ -200,7 +200,7 @@ async function processEmail(email, analysis, account, options, stats) {
 }
 
 async function handlePdfAttachment(email, analysis, account, stats, extra) {
-  const { deductible, deductibleReason, deductiblePercent, amountCents } = extra;
+  const { deductible, deductible_reason, deductible_percent, invoice_amount_cents } = extra;
   
   // Get full message to find attachment
   const fullMessage = await getMessage(account, email.id);
@@ -263,23 +263,23 @@ async function handlePdfAttachment(email, analysis, account, stats, extra) {
     invoice_path: outputPath,
     invoice_number: analysis.invoice_number,
     invoice_amount: analysis.amount,
-    invoice_amount_cents: amountCents,
+    invoice_amount_cents: invoice_amount_cents,
     invoice_date: analysis.invoice_date,
     attachment_hash: fileHash,
     deductible,
-    deductible_reason: deductibleReason,
-    deductible_percent: deductiblePercent,
+    deductible_reason,
+    deductible_percent,
   });
   
   const relativePath = path.relative(process.cwd(), outputPath);
   console.log(`  ✓ ${truncate(email.subject, 50)}`);
   console.log(`    → ${relativePath}`);
-  printDeductibility(deductible, deductibleReason, deductiblePercent);
+  printDeductibility(deductible, deductible_reason, deductible_percent);
   stats.downloaded++;
 }
 
 async function handleTextInvoice(email, analysis, account, stats, extra) {
-  const { deductible, deductibleReason, deductiblePercent, amountCents } = extra;
+  const { deductible, deductible_reason, deductible_percent, invoice_amount_cents } = extra;
   
   // Get full message
   const fullMessage = await getMessage(account, email.id);
@@ -335,18 +335,18 @@ async function handleTextInvoice(email, analysis, account, stats, extra) {
     invoice_path: outputPath,
     invoice_number: analysis.invoice_number,
     invoice_amount: analysis.amount,
-    invoice_amount_cents: amountCents,
+    invoice_amount_cents,
     invoice_date: analysis.invoice_date,
     attachment_hash: fileHash,
     deductible,
-    deductible_reason: deductibleReason,
-    deductible_percent: deductiblePercent,
+    deductible_reason,
+    deductible_percent,
   });
   
   const relativePath = path.relative(process.cwd(), outputPath);
   console.log(`  ✓ ${truncate(email.subject, 50)}`);
   console.log(`    → ${relativePath}`);
-  printDeductibility(deductible, deductibleReason, deductiblePercent);
+  printDeductibility(deductible, deductible_reason, deductible_percent);
   stats.downloaded++;
 }
 

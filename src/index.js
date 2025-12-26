@@ -9,6 +9,8 @@ import { searchCommand } from './commands/search.js';
 import { investigateCommand } from './commands/investigate.js';
 import { downloadCommand } from './commands/download.js';
 import { listCommand } from './commands/list.js';
+import { statusCommand } from './commands/status.js';
+import { logCommand } from './commands/log.js';
 import { closeDb } from './lib/db.js';
 
 const program = new Command();
@@ -23,8 +25,12 @@ program
   .description('Search Gmail for invoice-related emails')
   .requiredOption('-a, --account <email>', 'Gmail account to use')
   .requiredOption('-y, --year <year>', 'Year to search (e.g., 2024)')
+  .option('--from <month>', 'Start month (1-12, default: 1)', '1')
+  .option('--to <month>', 'End month (1-12, default: 12)', '12')
   .action(async (options) => {
     try {
+      options.fromMonth = parseInt(options.from, 10);
+      options.toMonth = parseInt(options.to, 10);
       await searchCommand(options);
     } catch (error) {
       console.error('Error:', error.message);
@@ -83,6 +89,39 @@ program
     try {
       if (options.year) options.year = parseInt(options.year, 10);
       await listCommand(options);
+    } catch (error) {
+      console.error('Error:', error.message);
+      process.exit(1);
+    } finally {
+      closeDb();
+    }
+  });
+
+program
+  .command('status')
+  .description('Show completion status for a year')
+  .requiredOption('-a, --account <email>', 'Gmail account to use')
+  .option('-y, --year <year>', 'Year to show status for (default: current year)')
+  .action(async (options) => {
+    try {
+      await statusCommand(options);
+    } catch (error) {
+      console.error('Error:', error.message);
+      process.exit(1);
+    } finally {
+      closeDb();
+    }
+  });
+
+program
+  .command('log')
+  .description('Show action history')
+  .requiredOption('-a, --account <email>', 'Gmail account to use')
+  .option('-l, --limit <n>', 'Number of actions to show', '20')
+  .option('--failed', 'Show only failed/interrupted actions')
+  .action(async (options) => {
+    try {
+      await logCommand(options);
     } catch (error) {
       console.error('Error:', error.message);
       process.exit(1);

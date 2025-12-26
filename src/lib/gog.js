@@ -31,7 +31,7 @@ export async function checkAccount(account) {
 export async function searchGmail(account, query, maxResults = 500) {
   try {
     const output = execSync(
-      `gog gmail search '${query.replace(/'/g, "'\\''")}' --account ${account} --json --max ${maxResults}`,
+      `gog gmail search '${query.replace(/'/g, "'\\''")}' --account ${account} --output json --max ${maxResults}`,
       { encoding: 'utf-8', maxBuffer: 50 * 1024 * 1024 }
     );
     
@@ -39,11 +39,25 @@ export async function searchGmail(account, query, maxResults = 500) {
       return [];
     }
     
-    return JSON.parse(output);
+    const result = JSON.parse(output);
+    
+    // gog returns { threads: [...], nextPageToken: ... }
+    if (result.threads && Array.isArray(result.threads)) {
+      return result.threads;
+    }
+    
+    // If it's already an array, return as-is
+    if (Array.isArray(result)) {
+      return result;
+    }
+    
+    return [];
   } catch (error) {
     if (error.stdout) {
       try {
-        return JSON.parse(error.stdout);
+        const result = JSON.parse(error.stdout);
+        if (result.threads) return result.threads;
+        if (Array.isArray(result)) return result;
       } catch {}
     }
     console.error('Error searching Gmail:', error.message);
@@ -57,7 +71,7 @@ export async function searchGmail(account, query, maxResults = 500) {
 export async function getMessage(account, messageId) {
   try {
     const output = execSync(
-      `gog gmail get ${messageId} --account ${account} --json`,
+      `gog gmail get ${messageId} --account ${account} --output json`,
       { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 }
     );
     return JSON.parse(output);
@@ -73,7 +87,7 @@ export async function getMessage(account, messageId) {
 export async function getThread(account, threadId) {
   try {
     const output = execSync(
-      `gog gmail thread ${threadId} --account ${account} --json`,
+      `gog gmail thread ${threadId} --account ${account} --output json`,
       { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 }
     );
     return JSON.parse(output);
