@@ -39,13 +39,13 @@ program
   .command('scan')
   .description('Stage 1: Scan Gmail for invoice-related emails')
   .requiredOption('-a, --account <email>', 'Gmail account to use')
-  .requiredOption('-y, --year <year>', 'Year to scan (e.g., 2024)')
-  .option('--from <month>', 'Start month (1-12, default: 1)', '1')
-  .option('--to <month>', 'End month (1-12, default: 12)', '12')
+  .option('-y, --year <year>', 'Year to scan (e.g., 2025)')
+  .option('-m, --month <month>', 'Month to scan (e.g., 2025-12)')
+  .option('-q, --quarter <quarter>', 'Quarter to scan (e.g., 2025-Q4)')
+  .option('--from <date>', 'Start date (YYYY-MM-DD)')
+  .option('--to <date>', 'End date (YYYY-MM-DD)')
   .action(async (options) => {
     try {
-      options.fromMonth = parseInt(options.from, 10);
-      options.toMonth = parseInt(options.to, 10);
       await scanCommand(options);
     } catch (error) {
       console.error('Error:', error.message);
@@ -121,9 +121,11 @@ program
   .command('run')
   .description('Run full pipeline: scan → extract → crawl → review')
   .requiredOption('-a, --account <email>', 'Gmail account to use')
-  .requiredOption('-y, --year <year>', 'Year to process (e.g., 2024)')
-  .option('--from <month>', 'Start month (1-12, default: 1)', '1')
-  .option('--to <month>', 'End month (1-12, default: 12)', '12')
+  .option('-y, --year <year>', 'Year to process (e.g., 2025)')
+  .option('-m, --month <month>', 'Month to process (e.g., 2025-12)')
+  .option('-q, --quarter <quarter>', 'Quarter to process (e.g., 2025-Q4)')
+  .option('--from <date>', 'Start date (YYYY-MM-DD)')
+  .option('--to <date>', 'End date (YYYY-MM-DD)')
   .option('-b, --batch-size <n>', 'Number of emails to process per batch', '10')
   .option('--auto-dedup', 'Automatically mark high-confidence duplicates')
   .option('--strict', 'Also auto-mark medium-confidence duplicates')
@@ -134,8 +136,6 @@ program
       if (options.model || options.provider) {
         setModelOverrides({ model: options.model, provider: options.provider });
       }
-      options.fromMonth = parseInt(options.from, 10);
-      options.toMonth = parseInt(options.to, 10);
       options.batchSize = parseInt(options.batchSize, 10);
       await runCommand(options);
     } catch (error) {

@@ -1,10 +1,11 @@
 /**
- * Search command - Search Gmail for invoice-related emails
+ * Scan command - Scan Gmail for invoice-related emails
  */
 
 import { checkAccount, searchGmail, buildInvoiceQuery } from '../lib/gog.js';
 import { getDb, insertEmail } from '../lib/db.js';
 import { extractSenderDomain } from '../lib/extract.js';
+import { parseDateRange, iterateMonths, getYearMonth } from '../lib/dates.js';
 import { 
   startAction, 
   updateActionProgress, 
@@ -14,21 +15,14 @@ import {
 } from '../lib/action-log.js';
 
 export async function scanCommand(options) {
-  const { account, year, fromMonth = 1, toMonth = 12 } = options;
-  const yearNum = parseInt(year, 10);
+  const { account } = options;
   
-  if (isNaN(yearNum) || yearNum < 2000 || yearNum > 2100) {
-    console.error(`Error: Invalid year "${year}". Please provide a valid year (e.g., 2024).`);
-    process.exit(1);
-  }
-  
-  if (fromMonth < 1 || fromMonth > 12 || toMonth < 1 || toMonth > 12) {
-    console.error(`Error: Invalid month range. Months must be between 1 and 12.`);
-    process.exit(1);
-  }
-  
-  if (fromMonth > toMonth) {
-    console.error(`Error: --from month must be <= --to month.`);
+  // Parse date range from options
+  let dateRange;
+  try {
+    dateRange = parseDateRange(options);
+  } catch (error) {
+    console.error(`Error: ${error.message}`);
     process.exit(1);
   }
   
@@ -44,10 +38,7 @@ export async function scanCommand(options) {
   }
   
   console.log(`✓ Account verified: ${account}`);
-  const monthRange = fromMonth === toMonth 
-    ? `month ${fromMonth}` 
-    : `months ${fromMonth}-${toMonth}`;
-  console.log(`\nSearching for invoices in ${yearNum} (${monthRange})...\n`);
+  console.log(`\nScanning for invoices: ${dateRange.display}...\n`);
   
   // Initialize database and mark any interrupted actions
   getDb();
@@ -56,13 +47,17 @@ export async function scanCommand(options) {
     console.log(`⚠ Marked ${interrupted} interrupted action(s) from previous run\n`);
   }
   
+  // Get year range for action log
+  const fromYM = getYearMonth(dateRange.from);
+  const toYM = getYearMonth(dateRange.to);
+  
   // Start action log
   const actionId = startAction({
-    action: 'search',
+    action: 'scan',
     account,
-    year: yearNum,
-    monthFrom: fromMonth,
-    monthTo: toMonth,
+    year: fromYM.year,
+    monthFrom: fromYM.month,
+    monthTo: toYM.year === fromYM.year ? toYM.month : 12,
   });
   
   let totalNew = 0;
@@ -70,74 +65,74 @@ export async function scanCommand(options) {
   let totalFound = 0;
   
   try {
-  // Search each month in range
-  for (let month = fromMonth; month <= toMonth; month++) {
-    const monthName = new Date(yearNum, month - 1, 1).toLocaleString('en', { month: 'long' });
-    process.stdout.write(`Searching ${monthName} ${yearNum}... `);
-    
-    const query = buildInvoiceQuery(yearNum, month);
-    const emails = await searchGmail(account, query);
-    
-    totalFound += emails.length;
-    
-    let newCount = 0;
-    let skippedCount = 0;
-    
-    for (const email of emails) {
-      // Parse email data
-      const sender = extractSender(email);
-      const senderDomain = extractSenderDomain(sender);
+    // Search each month in range
+    for (const { year, month } of iterateMonths(dateRange.from, dateRange.to)) {
+      const monthName = new Date(year, month - 1, 1).toLocaleString('en', { month: 'long' });
+      process.stdout.write(`Scanning ${monthName} ${year}... `);
       
-      const emailData = {
-        id: email.id,
-        thread_id: email.threadId,
-        account,
-        year: yearNum,
-        month,
-        subject: email.subject || extractSubject(email),
-        sender,
-        sender_domain: senderDomain,
-        date: email.date || extractDate(email),
-        snippet: email.snippet,
-        labels: JSON.stringify(email.labelIds || []),
-        raw_json: JSON.stringify(email),
-      };
+      const query = buildInvoiceQuery(year, month);
+      const emails = await searchGmail(account, query);
       
-      const inserted = insertEmail(emailData);
+      totalFound += emails.length;
       
-      if (inserted) {
-        newCount++;
-        totalNew++;
-      } else {
-        skippedCount++;
-        totalSkipped++;
+      let newCount = 0;
+      let skippedCount = 0;
+      
+      for (const email of emails) {
+        // Parse email data
+        const sender = extractSender(email);
+        const senderDomain = extractSenderDomain(sender);
+        
+        const emailData = {
+          id: email.id,
+          thread_id: email.threadId,
+          account,
+          year,
+          month,
+          subject: email.subject || extractSubject(email),
+          sender,
+          sender_domain: senderDomain,
+          date: email.date || extractDate(email),
+          snippet: email.snippet,
+          labels: JSON.stringify(email.labelIds || []),
+          raw_json: JSON.stringify(email),
+        };
+        
+        const inserted = insertEmail(emailData);
+        
+        if (inserted) {
+          newCount++;
+          totalNew++;
+        } else {
+          skippedCount++;
+          totalSkipped++;
+        }
       }
+      
+      console.log(`found ${emails.length} (${newCount} new, ${skippedCount} existing)`);
+      
+      // Update progress
+      updateActionProgress(actionId, {
+        emailsFound: totalFound,
+        emailsNew: totalNew,
+        emailsSkipped: totalSkipped,
+      });
     }
     
-    console.log(`found ${emails.length} (${newCount} new, ${skippedCount} existing)`);
-    
-    // Update progress
-    updateActionProgress(actionId, {
+    // Complete the action
+    completeAction(actionId, {
       emailsFound: totalFound,
       emailsNew: totalNew,
       emailsSkipped: totalSkipped,
     });
-  }
-  
-  // Complete the action
-  completeAction(actionId, {
-    emailsFound: totalFound,
-    emailsNew: totalNew,
-    emailsSkipped: totalSkipped,
-  });
-  
-  console.log(`\n${'─'.repeat(50)}`);
-  console.log(`Summary for ${yearNum}:`);
-  console.log(`  Total emails found: ${totalFound}`);
-  console.log(`  New emails added: ${totalNew}`);
-  console.log(`  Already in database: ${totalSkipped}`);
-  console.log(`\nRun "kraxler extract --account ${account}" to analyze the emails.`);
-  
+    
+    console.log(`\n${'─'.repeat(50)}`);
+    console.log(`Summary for ${dateRange.display}:`);
+    console.log(`  Total emails found: ${totalFound}`);
+    console.log(`  New emails added: ${totalNew}`);
+    console.log(`  Already in database: ${totalSkipped}`);
+    console.log(`\nRun "kraxler extract -a ${account}" to analyze the emails.`);
+    
   } catch (error) {
     failAction(actionId, error, {
       emailsFound: totalFound,

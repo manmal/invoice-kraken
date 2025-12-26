@@ -6,17 +6,28 @@ import { scanCommand } from './scan.js';
 import { extractCommand } from './extract.js';
 import { crawlCommand } from './crawl.js';
 import { reviewCommand } from './review.js';
-import { closeDb } from '../lib/db.js';
 import { closeBrowser } from '../lib/browser.js';
+import { parseDateRange, getYearMonth } from '../lib/dates.js';
 
 export async function runCommand(options) {
-  const { account, year, fromMonth, toMonth, batchSize = 10, autoDedup = false, strict = false } = options;
+  const { account, batchSize = 10, autoDedup = false, strict = false } = options;
+  
+  // Parse date range
+  let dateRange;
+  try {
+    dateRange = parseDateRange(options);
+  } catch (error) {
+    console.error(`Error: ${error.message}`);
+    process.exit(1);
+  }
+  
+  const fromYM = getYearMonth(dateRange.from);
   
   console.log('╔════════════════════════════════════════════════════════════════════════════╗');
   console.log('║  🦑 KRAXLER - Full Pipeline                                                ║');
   console.log('╚════════════════════════════════════════════════════════════════════════════╝');
   console.log(`\nAccount: ${account}`);
-  console.log(`Period: ${year} (months ${fromMonth}-${toMonth})\n`);
+  console.log(`Period: ${dateRange.display}\n`);
   
   const startTime = Date.now();
   
@@ -28,9 +39,7 @@ export async function runCommand(options) {
     
     await scanCommand({
       account,
-      year,
-      fromMonth,
-      toMonth,
+      ...options, // Pass through date options
     });
     
     console.log('\n');
@@ -70,7 +79,7 @@ export async function runCommand(options) {
       account,
       format: 'table',
       summary: true,
-      year: parseInt(year, 10),
+      year: fromYM.year,
     });
     
   } finally {
@@ -83,7 +92,7 @@ export async function runCommand(options) {
   console.log('║  ✅ PIPELINE COMPLETE                                                       ║');
   console.log('╚════════════════════════════════════════════════════════════════════════════╝');
   console.log(`\nTotal time: ${duration}s`);
-  console.log(`\nInvoices saved to: ./invoices/${year}/`);
+  console.log(`\nInvoices saved to: ./invoices/`);
   console.log(`\nNext steps:`);
   console.log(`  • Review any manual items listed above`);
   console.log(`  • Run "kraxler review -a ${account} --summary" for tax summary`);
