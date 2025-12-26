@@ -103,18 +103,98 @@ export async function getThread(account, threadId) {
 
 /**
  * Download attachment
+ * Falls back to extracting from raw email if gog attachment command fails
  */
 export async function downloadAttachment(account, messageId, attachmentId, outputPath) {
+  // First try the gog attachment command
   try {
     execSync(
       `gog gmail attachment ${messageId} ${attachmentId} --account ${account} --out '${outputPath}'`,
-      { encoding: 'utf-8' }
+      { encoding: 'utf-8', stdio: 'pipe' }
     );
     return true;
+  } catch (error) {
+    // gog attachment command failed, try fallback
+    console.log(`  gog attachment failed, trying raw email extraction...`);
+  }
+  
+  // Fallback: Extract from raw email format
+  try {
+    return await downloadAttachmentFromRaw(account, messageId, outputPath);
   } catch (error) {
     console.error(`Error downloading attachment:`, error.message);
     return false;
   }
+}
+
+/**
+ * Download attachment by extracting from raw email format
+ */
+async function downloadAttachmentFromRaw(account, messageId, outputPath) {
+  // Get raw email
+  const output = execSync(
+    `gog gmail get ${messageId} --account ${account} --format raw --output json`,
+    { encoding: 'utf-8', maxBuffer: 50 * 1024 * 1024 }
+  );
+  
+  const result = JSON.parse(output);
+  const rawBase64 = result.message?.raw || result.raw;
+  
+  if (!rawBase64) {
+    throw new Error('No raw email data');
+  }
+  
+  // Decode the raw email
+  const rawEmail = Buffer.from(rawBase64, 'base64').toString('utf-8');
+  
+  // Find PDF attachment in the raw email
+  // Look for Content-Disposition: attachment with .pdf filename
+  const pdfMatch = rawEmail.match(/Content-Disposition:\s*attachment;\s*filename="([^"]+\.pdf)"/i);
+  
+  if (!pdfMatch) {
+    throw new Error('No PDF attachment found in raw email');
+  }
+  
+  const filename = pdfMatch[1];
+  
+  // Find the boundary that contains this attachment
+  const boundaryMatch = rawEmail.match(/boundary="([^"]+)"/);
+  if (!boundaryMatch) {
+    throw new Error('Could not find MIME boundary');
+  }
+  
+  // Extract the base64 content between the attachment header and the next boundary
+  const attachmentStart = rawEmail.indexOf(pdfMatch[0]);
+  const contentStart = rawEmail.indexOf('\r\n\r\n', attachmentStart) + 4;
+  
+  // Find the end - next boundary
+  const boundaryPattern = '--' + boundaryMatch[1];
+  let contentEnd = rawEmail.indexOf(boundaryPattern, contentStart);
+  
+  if (contentEnd === -1) {
+    // Try without the leading --
+    contentEnd = rawEmail.indexOf(boundaryMatch[1], contentStart);
+  }
+  
+  if (contentEnd === -1) {
+    throw new Error('Could not find attachment end boundary');
+  }
+  
+  // Extract and clean the base64 content
+  let base64Content = rawEmail.substring(contentStart, contentEnd);
+  base64Content = base64Content.replace(/[\r\n\s]/g, '');
+  
+  // Decode and write to file
+  const fs = await import('fs');
+  const path = await import('path');
+  
+  // Ensure directory exists
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+  
+  const pdfBuffer = Buffer.from(base64Content, 'base64');
+  fs.writeFileSync(outputPath, pdfBuffer);
+  
+  return true;
 }
 
 /**
