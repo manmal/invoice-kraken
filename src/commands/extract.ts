@@ -9,6 +9,11 @@ import {
   findDuplicateByInvoiceNumber,
   findDuplicateByFuzzyMatch,
 } from '../lib/db.js';
+import {
+  startAction,
+  completeAction,
+  failAction,
+} from '../lib/action-log.js';
 import { prefilterEmails } from '../lib/prefilter.js';
 import { getMessage, downloadAttachment } from '../lib/gmail.js';
 import { analyzeEmailsForInvoices, checkAuth } from '../lib/ai.js';
@@ -16,6 +21,11 @@ import { parseAmountToCents } from '../lib/extract.js';
 import { classifyExpense } from '../lib/vendors.js';
 import { getSituationForDate } from '../lib/situations.js';
 import { loadConfig } from '../lib/config.js';
+import { computeHashForDateString } from '../lib/situation-hash.js';
+import { 
+  validateClassification, 
+  formatValidationResult,
+} from '../lib/classification-pipeline.js';
 import { generatePdfFromText, generatePdfFromEmailHtml } from '../lib/pdf.js';
 import { hashFile } from '../utils/hash.js';
 import { getInvoiceOutputPath } from '../utils/paths.js';
@@ -48,7 +58,7 @@ interface EmailAnalysis {
   invoice_date?: string | null;
   vendor_product?: string | null;
   notes?: string | null;
-  deductible?: DeductibleCategory | 'unclear';
+  deductible?: DeductibleCategory;
   deductible_reason?: string;
   deductible_percent?: number;
   income_tax_percent?: number;
@@ -72,6 +82,8 @@ interface ExtraData {
   income_tax_percent: number | null | undefined;
   vat_recoverable: number;
   invoice_amount_cents: number | null;
+  situation_hash: string | null;
+  last_classified_at: string;
 }
 
 interface EmailContent {
@@ -115,6 +127,12 @@ export async function extractCommand(options: ExtractOptions): Promise<void> {
     return;
   }
   
+  // Start action log
+  const actionId = startAction({
+    action: 'extract',
+    account,
+  });
+  
   // Pre-filter obvious non-invoices
   const { toAnalyze, toSkip } = prefilterEmails(pendingEmails);
   
@@ -131,6 +149,10 @@ export async function extractCommand(options: ExtractOptions): Promise<void> {
   
   if (toAnalyze.length === 0) {
     console.log('No emails require AI analysis.');
+    completeAction(actionId, {
+      emailsFound: pendingEmails.length,
+      emailsSkipped: toSkip.length,
+    });
     return;
   }
   
@@ -153,56 +175,72 @@ export async function extractCommand(options: ExtractOptions): Promise<void> {
   // Track token usage per phase
   const usageByPhase: PhaseUsageReport[] = [];
   
-  let batchNum = 0;
-  for (const batch of batches) {
-    batchNum++;
-    console.log(`\n${'─'.repeat(50)}`);
-    console.log(`Batch ${batchNum}/${batches.length}: Analyzing ${batch.length} emails...`);
-    console.log(`${'─'.repeat(50)}`);
-    
-    // Analyze batch with AI (pass account for email body fetching)
-    const { results: analyses, usage, model, provider } = await analyzeEmailsForInvoices(batch, { account });
-    
-    // Track usage for this batch
-    let classificationPhase = usageByPhase.find(p => p.phase === 'emailClassification');
-    if (!classificationPhase) {
-      classificationPhase = { phase: 'emailClassification', model, provider, calls: 0, usage: emptyUsage() };
-      usageByPhase.push(classificationPhase);
-    }
-    classificationPhase.calls += 1;
-    addUsage(classificationPhase.usage, usage as Partial<Usage>);
-    
-    // Process each email
-    for (let i = 0; i < batch.length; i++) {
-      const email = batch[i];
-      const analysis: EmailAnalysis = (analyses as EmailAnalysis[]).find((a: EmailAnalysis) => a.id === email.id) || (analyses as EmailAnalysis[])[i] || {};
+  try {
+    let batchNum = 0;
+    for (const batch of batches) {
+      batchNum++;
+      console.log(`\n${'─'.repeat(50)}`);
+      console.log(`Batch ${batchNum}/${batches.length}: Analyzing ${batch.length} emails...`);
+      console.log(`${'─'.repeat(50)}`);
       
-      await processEmail(email, analysis, account, { autoDedup, strict }, stats);
+      // Analyze batch with AI (pass account for email body fetching)
+      const { results: analyses, usage, model, provider } = await analyzeEmailsForInvoices(batch, { account });
+      
+      // Track usage for this batch
+      let classificationPhase = usageByPhase.find(p => p.phase === 'emailClassification');
+      if (!classificationPhase) {
+        classificationPhase = { phase: 'emailClassification', model, provider, calls: 0, usage: emptyUsage() };
+        usageByPhase.push(classificationPhase);
+      }
+      classificationPhase.calls += 1;
+      addUsage(classificationPhase.usage, usage as Partial<Usage>);
+      
+      // Process each email
+      for (let i = 0; i < batch.length; i++) {
+        const email = batch[i];
+        const analysis: EmailAnalysis = (analyses as EmailAnalysis[]).find((a: EmailAnalysis) => a.id === email.id) || (analyses as EmailAnalysis[])[i] || {};
+        
+        await processEmail(email, analysis, account, { autoDedup, strict }, stats);
+      }
     }
-  }
-  
-  // Print summary
-  console.log(`\n${'═'.repeat(50)}`);
-  console.log('INVESTIGATION COMPLETE');
-  console.log(`${'═'.repeat(50)}`);
-  console.log(`  ✓ Invoices found: ${stats.invoices}`);
-  console.log(`  ✓ Downloaded: ${stats.downloaded}`);
-  console.log(`  ⏳ Pending download: ${stats.pendingDownload}`);
-  console.log(`  ⊘ Duplicates: ${stats.duplicates}`);
-  console.log(`  ✗ Not invoices: ${stats.noInvoice}`);
-  console.log(`  ⚠ Manual review: ${stats.manual}`);
-  console.log(`  ✗ Errors: ${stats.errors}`);
-  
-  // Print token usage report
-  if (usageByPhase.length > 0) {
-    console.log(formatUsageReport(usageByPhase));
-  }
-  
-  if (stats.pendingDownload > 0) {
-    console.log(`Run "kraxler crawl --account ${account}" to download remaining invoices.`);
-  }
-  if (stats.manual > 0) {
-    console.log(`Run "kraxler review --account ${account}" to see items needing manual handling.`);
+    
+    // Complete action log
+    completeAction(actionId, {
+      emailsFound: pendingEmails.length,
+      emailsProcessed: stats.invoices + stats.noInvoice + stats.duplicates,
+      emailsSkipped: toSkip.length,
+      emailsFailed: stats.errors,
+    });
+    
+    // Print summary
+    console.log(`\n${'═'.repeat(50)}`);
+    console.log('INVESTIGATION COMPLETE');
+    console.log(`${'═'.repeat(50)}`);
+    console.log(`  ✓ Invoices found: ${stats.invoices}`);
+    console.log(`  ✓ Downloaded: ${stats.downloaded}`);
+    console.log(`  ⏳ Pending download: ${stats.pendingDownload}`);
+    console.log(`  ⊘ Duplicates: ${stats.duplicates}`);
+    console.log(`  ✗ Not invoices: ${stats.noInvoice}`);
+    console.log(`  ⚠ Manual review: ${stats.manual}`);
+    console.log(`  ✗ Errors: ${stats.errors}`);
+    
+    // Print token usage report
+    if (usageByPhase.length > 0) {
+      console.log(formatUsageReport(usageByPhase));
+    }
+    
+    if (stats.pendingDownload > 0) {
+      console.log(`Run "kraxler crawl --account ${account}" to download remaining invoices.`);
+    }
+    if (stats.manual > 0) {
+      console.log(`Run "kraxler review --account ${account}" to see items needing manual handling.`);
+    }
+  } catch (error) {
+    failAction(actionId, error as Error, {
+      emailsFound: pendingEmails.length,
+      emailsProcessed: stats.invoices + stats.noInvoice + stats.duplicates,
+    });
+    throw error;
   }
 }
 
@@ -228,37 +266,70 @@ async function processEmail(
     
     stats.invoices++;
     
-    // Get deductibility (from AI or fallback to vendor DB)
-    let deductible: DeductibleCategory | 'unclear' | undefined = analysis.deductible;
+    // Get config and situation for the invoice date
+    const config = loadConfig();
+    const invoiceDateStr = analysis.invoice_date || email.date?.split('T')[0] || new Date().toISOString().split('T')[0];
+    const invoiceDate = new Date(invoiceDateStr);
+    const situation = getSituationForDate(config, invoiceDate);
+    
+    // Start with AI classification, fallback to vendor DB
+    let deductible: DeductibleCategory = (analysis.deductible as DeductibleCategory) || 'unclear';
     let deductibleReason: string | undefined = analysis.deductible_reason;
     let incomeTaxPercent: number | null | undefined = analysis.income_tax_percent;
     let vatRecoverable: boolean | null | undefined = analysis.vat_recoverable;
     
     // Fallback to vendor DB if AI didn't provide clear classification
-    if (!deductible || deductible === 'unclear') {
-      // Get config and situation for the invoice date
-      const config = loadConfig();
-      const invoiceDateStr = analysis.invoice_date || email.date?.split('T')[0] || new Date().toISOString().split('T')[0];
-      const invoiceDate = new Date(invoiceDateStr);
-      const situation = getSituationForDate(config, invoiceDate);
-      
-      if (situation) {
-        const vendorClassification = classifyExpense(
-          email.sender_domain,
-          email.subject ?? '',
-          email.snippet ?? '',
-          situation
-        );
-        deductible = vendorClassification.deductibleCategory;
-        deductibleReason = vendorClassification.reason;
-        incomeTaxPercent = vendorClassification.incomeTaxPercent;
-        vatRecoverable = vendorClassification.vatRecoverable;
-      }
+    if ((!deductible || deductible === 'unclear') && situation) {
+      const vendorClassification = classifyExpense(
+        email.sender_domain,
+        email.subject ?? '',
+        email.snippet ?? '',
+        situation
+      );
+      deductible = vendorClassification.deductibleCategory;
+      deductibleReason = vendorClassification.reason;
+      incomeTaxPercent = vendorClassification.incomeTaxPercent;
+      vatRecoverable = vendorClassification.vatRecoverable;
     }
     
     // Legacy support: convert deductible_percent to new fields if needed
     if (incomeTaxPercent === undefined && analysis.deductible_percent !== undefined) {
       incomeTaxPercent = analysis.deductible_percent;
+    }
+    
+    // Run validation pipeline (legal constraints, cross-validation, anomaly detection)
+    if (situation) {
+      const validationResult = validateClassification(
+        email,
+        {
+          id: email.id,
+          has_invoice: analysis.has_invoice ?? true,
+          invoice_type: (analysis.invoice_type || 'none') as 'text' | 'pdf_attachment' | 'link' | 'none',
+          invoice_number: analysis.invoice_number,
+          amount: analysis.amount,
+          invoice_date: analysis.invoice_date,
+          vendor_product: analysis.vendor_product,
+          notes: analysis.notes,
+          confidence: 'medium',
+          deductible: deductible,
+          deductible_reason: deductibleReason,
+          income_tax_percent: incomeTaxPercent ?? null,
+          vat_recoverable: vatRecoverable ?? null,
+        },
+        situation,
+        account
+      );
+      
+      // Apply validated values
+      deductible = validationResult.category;
+      deductibleReason = validationResult.reason;
+      incomeTaxPercent = validationResult.incomeTaxPercent;
+      vatRecoverable = validationResult.vatRecoverable;
+      
+      // Print validation info if modified
+      if (validationResult.wasModified) {
+        console.log(formatValidationResult(validationResult));
+      }
     }
     
     // Parse amount
@@ -283,6 +354,9 @@ async function processEmail(
       return;
     }
     
+    // Compute situation hash for this invoice date  
+    const situationHash = computeHashForDateString(config, invoiceDateStr);
+    
     // Common extra data for all handlers
     const extraData: ExtraData = {
       deductible,
@@ -290,6 +364,8 @@ async function processEmail(
       income_tax_percent: incomeTaxPercent,
       vat_recoverable: vatRecoverable ? 1 : 0,
       invoice_amount_cents: amountCents,
+      situation_hash: situationHash,
+      last_classified_at: new Date().toISOString(),
     };
     
     // IMPORTANT: Always check for PDF attachments first, regardless of AI classification
@@ -352,7 +428,7 @@ async function handlePdfAttachment(
   preloadedMessage: GmailMessage | null = null, 
   preloadedAttachment: PdfAttachmentInfo | null = null
 ): Promise<void> {
-  const { deductible, deductible_reason, income_tax_percent, vat_recoverable, invoice_amount_cents } = extra;
+  const { deductible, deductible_reason, income_tax_percent, vat_recoverable } = extra;
   
   // Use pre-loaded message if available, otherwise fetch
   const fullMessage: GmailMessage | null = preloadedMessage || await getMessage(account, email.id);
@@ -415,14 +491,10 @@ async function handlePdfAttachment(
     invoice_path: outputPath,
     invoice_number: analysis.invoice_number,
     invoice_amount: analysis.amount,
-    invoice_amount_cents: invoice_amount_cents,
     invoice_date: analysis.invoice_date,
     attachment_hash: fileHash,
     file_hash: fileHash,
-    deductible,
-    deductible_reason,
-    income_tax_percent,
-    vat_recoverable,
+    ...extra,
   });
   
   const relativePath: string = path.relative(process.cwd(), outputPath);
@@ -440,7 +512,7 @@ async function handleTextInvoice(
   extra: ExtraData, 
   preloadedMessage: GmailMessage | null = null
 ): Promise<void> {
-  const { deductible, deductible_reason, income_tax_percent, vat_recoverable, invoice_amount_cents } = extra;
+  const { deductible, deductible_reason, income_tax_percent, vat_recoverable } = extra;
   
   // Use pre-loaded message if available, otherwise fetch
   const fullMessage: GmailMessage | null = preloadedMessage || await getMessage(account, email.id);
@@ -506,14 +578,10 @@ async function handleTextInvoice(
     invoice_path: outputPath,
     invoice_number: analysis.invoice_number,
     invoice_amount: analysis.amount,
-    invoice_amount_cents,
     invoice_date: analysis.invoice_date,
     attachment_hash: fileHash,
     file_hash: fileHash,
-    deductible,
-    deductible_reason,
-    income_tax_percent,
-    vat_recoverable,
+    ...extra,
   });
   
   const relativePath: string = path.relative(process.cwd(), outputPath);

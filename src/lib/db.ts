@@ -18,17 +18,25 @@ import type {
 // Allocation type used in allocation_json column
 import type { Allocation as _Allocation } from './jurisdictions/interface.js';
 
-const DB_PATH: string = getDatabasePath();
-
 let db: DatabaseType | null = null;
+let currentDbPath: string | null = null;
 
 // ============================================================================
 // Database Connection
 // ============================================================================
 
 export function getDb(): DatabaseType {
+  const dbPath = getDatabasePath();
+  
+  // If workdir changed, close old db and open new one
+  if (db && currentDbPath !== dbPath) {
+    db.close();
+    db = null;
+  }
+  
   if (!db) {
-    db = new Database(DB_PATH);
+    currentDbPath = dbPath;
+    db = new Database(dbPath);
     db.exec('PRAGMA journal_mode = WAL');
     initSchema();
   }
@@ -170,12 +178,16 @@ function runMigrations(): void {
     'ALTER TABLE emails ADD COLUMN assignment_status TEXT',
     'ALTER TABLE emails ADD COLUMN assignment_metadata TEXT',
     'ALTER TABLE emails ADD COLUMN migration_source TEXT',
+    
+    // V2.1: Reclassification support
+    'ALTER TABLE emails ADD COLUMN situation_hash TEXT',
+    'ALTER TABLE emails ADD COLUMN last_classified_at TEXT',
   ];
   
   for (const sql of migrations) {
     try {
       db.exec(sql);
-    } catch (e) {
+    } catch {
       // Column may already exist - ignore
     }
   }
@@ -185,9 +197,42 @@ function runMigrations(): void {
     db.exec('CREATE INDEX IF NOT EXISTS idx_emails_situation_id ON emails(situation_id)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_emails_income_source_id ON emails(income_source_id)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_emails_assignment_status ON emails(assignment_status)');
-  } catch (e) {
+    db.exec('CREATE INDEX IF NOT EXISTS idx_emails_situation_hash ON emails(situation_hash)');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_emails_invoice_date ON emails(invoice_date)');
+  } catch {
     // Indexes may already exist
   }
+  
+  // Initialize classification history table
+  initClassificationHistoryTable();
+}
+
+/**
+ * Initialize classification_history table for audit trail.
+ */
+function initClassificationHistoryTable(): void {
+  if (!db) return;
+  
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS classification_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      email_id TEXT NOT NULL,
+      account TEXT NOT NULL,
+      classified_at TEXT NOT NULL,
+      situation_hash TEXT NOT NULL,
+      situation_id TEXT NOT NULL,
+      deductible TEXT,
+      income_tax_percent INTEGER,
+      vat_recoverable INTEGER,
+      income_source_id TEXT,
+      trigger TEXT NOT NULL
+    );
+    
+    CREATE INDEX IF NOT EXISTS idx_classification_history_email 
+      ON classification_history(email_id, account);
+    CREATE INDEX IF NOT EXISTS idx_classification_history_date 
+      ON classification_history(classified_at);
+  `);
 }
 
 // ============================================================================

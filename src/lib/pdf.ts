@@ -37,7 +37,7 @@ export async function generatePdfFromHtml(html: string, outputPath: string): Pro
     
     fs.unlinkSync(tempHtmlPath);
     return true;
-  } catch (error) {
+  } catch {
     // wkhtmltopdf not available, try alternatives
   }
   
@@ -68,7 +68,7 @@ export async function generatePdfFromHtml(html: string, outputPath: string): Pro
     }
     
     fs.unlinkSync(tempHtmlPath);
-  } catch (error) {
+  } catch {
     // Chrome not available
   }
   

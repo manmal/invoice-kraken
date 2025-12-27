@@ -4,6 +4,11 @@
 
 # 🇦🇹🇩🇪 Kraxler
 
+[![npm version](https://img.shields.io/npm/v/kraxler.svg)](https://www.npmjs.com/package/kraxler)
+[![CI](https://github.com/manmal/kraxler/actions/workflows/ci.yml/badge.svg)](https://github.com/manmal/kraxler/actions/workflows/ci.yml)
+[![Node.js](https://img.shields.io/node/v/kraxler.svg)](https://nodejs.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 Extract invoices from Gmail with AI-powered classification for 🇦🇹 Austrian and 🇩🇪 German tax deductions.
 
 > 🌍 **Contributions welcome!** PRs for other countries or alternative invoice classification schemes are very welcome!
@@ -46,7 +51,7 @@ npx kraxler run -a your@gmail.com --year 2025
    └── Includes deductibility classification
 ```
 
-Or run all stages at once:
+Or run all stages at once (includes automatic JSONL report export):
 
 ```bash
 npx kraxler run -a your@gmail.com --year 2025
@@ -159,7 +164,7 @@ npx kraxler extract -a x@gmail.com --model gemini-2.5-flash --provider google
 
 ```bash
 # Pipeline
-npx kraxler run      # Full pipeline (all 5 stages)
+npx kraxler run      # Full pipeline (all 5 stages, includes JSONL export)
 npx kraxler scan     # Stage 1: Find emails
 npx kraxler extract  # Stage 2: Download attachments, classify
 npx kraxler crawl    # Stage 3: Browser download for links

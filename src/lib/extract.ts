@@ -20,7 +20,7 @@ const INVOICE_PATTERNS: RegExp[] = [
   
   // Generic patterns
   /\b([A-Z]{2,4}[-\s]?\d{6,})\b/,
-  /\b(\d{4}[-\/]\d{4,})\b/,
+  /\b(\d{4}[-/]\d{4,})\b/,
 ];
 
 // Amount patterns

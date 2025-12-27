@@ -48,6 +48,8 @@ function createMockEmail(overrides: Partial<Email> = {}): Email {
     assignment_status: null,
     assignment_metadata: null,
     migration_source: null,
+    situation_hash: null,
+    last_classified_at: null,
     created_at: "2024-12-15T10:00:00Z",
     updated_at: "2024-12-15T10:00:00Z",
     ...overrides,

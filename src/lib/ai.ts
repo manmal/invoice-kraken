@@ -28,7 +28,7 @@ import { getTaxRules } from './jurisdictions/registry.js';
 import { emptyUsage, addUsage } from './tokens.js';
 import type { Usage } from './tokens.js';
 import { getEmailBodiesBatch, getTruncatedBody } from './email-cache.js';
-import type { Email } from '../types.js';
+import type { Email, DeductibleCategory } from '../types.js';
 
 interface AgentEvent {
   type: string;
@@ -355,7 +355,7 @@ export interface EmailClassificationResult {
   amount?: string | null;
   invoice_date?: string | null;
   vendor_product?: string | null;
-  deductible?: 'full' | 'vehicle' | 'meals' | 'telecom' | 'gifts' | 'none' | 'unclear';
+  deductible?: DeductibleCategory;
   deductible_reason?: string | null;
   income_tax_percent?: number | null;
   vat_recoverable?: boolean | null;

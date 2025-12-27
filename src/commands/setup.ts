@@ -7,6 +7,10 @@
 
 import * as readline from "readline";
 import { loadConfig, saveConfig } from "../lib/config.js";
+import { 
+  countAffectedInvoices, 
+  markDateRangeForReclassification,
+} from "../lib/reclassification.js";
 import { validateConfig } from "../lib/situations.js";
 import { getJurisdictionInfo } from "../lib/jurisdictions/registry.js";
 import type { KraxlerConfig } from "../types.js";
@@ -106,6 +110,71 @@ async function askDate(
   }
 
   return answer;
+}
+
+// ============================================================================
+// Reclassification Helpers
+// ============================================================================
+
+/**
+ * Check if invoices will need reclassification after a situation change.
+ * Prompts user to run reclassification immediately if needed.
+ * 
+ * @todo Wire this into situation editing flow
+ */
+export async function checkReclassificationNeeded(
+  rl: readline.Interface,
+  config: KraxlerConfig,
+  situation: Situation,
+  changeDescription: string
+): Promise<void> {
+  // Count affected invoices
+  const affected = countAffectedInvoices(
+    config.accounts[0] || 'default',
+    situation.from,
+    situation.to
+  );
+  
+  if (affected.count === 0) {
+    return; // No invoices affected
+  }
+  
+  console.log(`\n╔════════════════════════════════════════════════════════════════════════════╗`);
+  console.log(`║  ⚠️  RECLASSIFICATION NEEDED                                                 ║`);
+  console.log(`╚════════════════════════════════════════════════════════════════════════════╝`);
+  console.log(`\n  ${changeDescription}`);
+  console.log(`\n  This change affects ${affected.count} existing invoice(s).`);
+  
+  if (affected.dateRange) {
+    console.log(`  Date range: ${affected.dateRange.from} to ${affected.dateRange.to}`);
+  }
+  
+  if (affected.samples.length > 0) {
+    console.log(`\n  Examples:`);
+    for (const sample of affected.samples) {
+      console.log(`    • ${sample.invoiceDate}: ${sample.subject || '(no subject)'}`);
+    }
+    if (affected.count > affected.samples.length) {
+      console.log(`    ... and ${affected.count - affected.samples.length} more`);
+    }
+  }
+  
+  console.log(`\n  These invoices need reclassification to apply the new settings.`);
+  console.log(`  Their tax calculations (VAT recovery, income tax %) may change.\n`);
+  
+  const runNow = await askYesNo(rl, 'Mark invoices for reclassification now?');
+  
+  if (runNow) {
+    const marked = markDateRangeForReclassification(
+      config.accounts[0] || 'default',
+      situation.from,
+      situation.to
+    );
+    console.log(`\n  ✓ Marked ${marked} invoice(s) for reclassification.`);
+    console.log(`  Run 'kraxler run --from classify' to process them.\n`);
+  } else {
+    console.log(`\n  Run 'kraxler run --from classify' later to reclassify.\n`);
+  }
 }
 
 // ============================================================================

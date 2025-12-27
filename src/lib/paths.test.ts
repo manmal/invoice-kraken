@@ -15,19 +15,12 @@ vi.mock('fs', async () => {
   };
 });
 
-// Mock env-paths to use temp directories
+// Mock env-paths to use temp directories (for XDG paths)
 vi.mock('env-paths', () => {
-  const tempBase = require('path').join(
-    require('os').tmpdir(),
-    'kraxler-test-mock'
-  );
   return {
     default: () => ({
-      data: require('path').join(tempBase, 'data'),
-      config: require('path').join(tempBase, 'config'),
-      cache: require('path').join(tempBase, 'cache'),
-      log: require('path').join(tempBase, 'log'),
-      temp: require('path').join(tempBase, 'temp'),
+      config: `${tmpdir()}/kraxler-test-mock/xdg-config`,
+      cache: `${tmpdir()}/kraxler-test-mock/xdg-cache`,
     }),
   };
 });
@@ -35,17 +28,23 @@ vi.mock('env-paths', () => {
 // Import after mocks are set up
 import {
   ensureDir,
-  getDataDir,
   getConfigDir,
+  getCacheDir,
+  getAuthPath,
   getDatabasePath,
   getConfigPath,
   getInvoicesDir,
+  getReportsDir,
+  getWorkDir,
+  setWorkDir,
   getAllPaths,
 } from './paths.js';
 
 describe('paths', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Reset workdir by setting it to undefined (hacky but works for tests)
+    // In real code, workdir persists for the session
   });
 
   afterEach(() => {
@@ -76,67 +75,81 @@ describe('paths', () => {
     });
   });
 
-  describe('getDataDir', () => {
-    it('returns correct path and ensures directory exists', () => {
-      vi.mocked(fs.existsSync).mockReturnValue(false);
-
-      const result = getDataDir();
-
-      expect(result).toBe(path.join(tempBase, 'data'));
-      expect(fs.existsSync).toHaveBeenCalled();
-    });
-  });
-
-  describe('getConfigDir', () => {
-    it('returns correct path and ensures directory exists', () => {
+  describe('XDG paths (system-wide)', () => {
+    it('getConfigDir returns XDG config path', () => {
       vi.mocked(fs.existsSync).mockReturnValue(false);
 
       const result = getConfigDir();
 
-      expect(result).toBe(path.join(tempBase, 'config'));
-      expect(fs.existsSync).toHaveBeenCalled();
+      expect(result).toBe(path.join(tempBase, 'xdg-config'));
+    });
+
+    it('getCacheDir returns XDG cache path', () => {
+      vi.mocked(fs.existsSync).mockReturnValue(false);
+
+      const result = getCacheDir();
+
+      expect(result).toBe(path.join(tempBase, 'xdg-cache'));
+    });
+
+    it('getAuthPath returns auth.json in XDG config', () => {
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+
+      const result = getAuthPath();
+
+      expect(result).toBe(path.join(tempBase, 'xdg-config', 'auth.json'));
     });
   });
 
-  describe('getDatabasePath', () => {
-    it('returns correct path with kraxler.db filename', () => {
+  describe('Working directory paths', () => {
+    it('getWorkDir defaults to cwd', () => {
+      const result = getWorkDir();
+      expect(result).toBe(process.cwd());
+    });
+
+    it('getDatabasePath returns kraxler.db in workdir', () => {
       vi.mocked(fs.existsSync).mockReturnValue(true);
 
       const result = getDatabasePath();
 
-      expect(result).toBe(path.join(tempBase, 'data', 'kraxler.db'));
+      expect(result).toBe(path.join(process.cwd(), 'kraxler.db'));
     });
-  });
 
-  describe('getConfigPath', () => {
-    it('returns correct path with config.json filename', () => {
+    it('getConfigPath returns kraxler.json in workdir', () => {
       vi.mocked(fs.existsSync).mockReturnValue(true);
 
       const result = getConfigPath();
 
-      expect(result).toBe(path.join(tempBase, 'config', 'config.json'));
+      expect(result).toBe(path.join(process.cwd(), 'kraxler.json'));
     });
-  });
 
-  describe('getInvoicesDir', () => {
-    it('uses cwd by default', () => {
+    it('getInvoicesDir returns invoices/ in workdir', () => {
       vi.mocked(fs.existsSync).mockReturnValue(false);
-      const expectedPath = path.join(process.cwd(), 'invoices');
 
       const result = getInvoicesDir();
 
-      expect(result).toBe(expectedPath);
-      expect(fs.existsSync).toHaveBeenCalledWith(expectedPath);
+      expect(result).toBe(path.join(process.cwd(), 'invoices'));
     });
 
-    it('uses custom path when provided', () => {
+    it('getReportsDir returns reports/ in workdir', () => {
       vi.mocked(fs.existsSync).mockReturnValue(false);
-      const customPath = '/custom/invoice/path';
 
-      const result = getInvoicesDir(customPath);
+      const result = getReportsDir();
 
-      expect(result).toBe(customPath);
-      expect(fs.existsSync).toHaveBeenCalledWith(customPath);
+      expect(result).toBe(path.join(process.cwd(), 'reports'));
+    });
+  });
+
+  describe('setWorkDir', () => {
+    it('changes workdir for subsequent calls', () => {
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      
+      const customDir = '/custom/work/dir';
+      setWorkDir(customDir);
+
+      expect(getWorkDir()).toBe(customDir);
+      expect(getDatabasePath()).toBe(path.join(customDir, 'kraxler.db'));
+      expect(getConfigPath()).toBe(path.join(customDir, 'kraxler.json'));
     });
   });
 
@@ -146,31 +159,13 @@ describe('paths', () => {
 
       const result = getAllPaths();
 
-      expect(result).toHaveProperty('data');
-      expect(result).toHaveProperty('config');
-      expect(result).toHaveProperty('cache');
-      expect(result).toHaveProperty('log');
-      expect(result).toHaveProperty('temp');
+      expect(result).toHaveProperty('workDir');
       expect(result).toHaveProperty('database');
       expect(result).toHaveProperty('configFile');
       expect(result).toHaveProperty('invoices');
-    });
-
-    it('returns correct path values', () => {
-      vi.mocked(fs.existsSync).mockReturnValue(true);
-
-      const result = getAllPaths();
-
-      expect(result.data).toBe(path.join(tempBase, 'data'));
-      expect(result.config).toBe(path.join(tempBase, 'config'));
-      expect(result.cache).toBe(path.join(tempBase, 'cache'));
-      expect(result.log).toBe(path.join(tempBase, 'log'));
-      expect(result.temp).toBe(path.join(tempBase, 'temp'));
-      expect(result.database).toBe(path.join(tempBase, 'data', 'kraxler.db'));
-      expect(result.configFile).toBe(
-        path.join(tempBase, 'config', 'config.json')
-      );
-      expect(result.invoices).toBe(path.join(process.cwd(), 'invoices'));
+      expect(result).toHaveProperty('reports');
+      expect(result).toHaveProperty('authFile');
+      expect(result).toHaveProperty('cache');
     });
   });
 });

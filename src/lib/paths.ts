@@ -1,36 +1,56 @@
 /**
- * Cross-platform path management using XDG-compliant directories
+ * Path Management
  * 
- * This module provides consistent paths for:
- * - Data (SQLite database)
- * - Config (user preferences) 
- * - Cache (email content cache)
- * - Logs (future use)
+ * Two types of paths:
+ * 1. Auth/Config: XDG-compliant system paths (per-user, not project-specific)
+ * 2. Working directory: Project-specific data (db, invoices, reports)
  * 
- * Paths are stored in OS-standard locations:
- * - macOS: ~/Library/Application Support/kraxler, ~/Library/Preferences/kraxler, etc.
- * - Linux: ~/.local/share/kraxler, ~/.config/kraxler, ~/.cache/kraxler
- * - Windows: %LOCALAPPDATA%\kraxler\Data, etc.
+ * The working directory can be set via:
+ * - `--workdir` flag on any command
+ * - `KRAXLER_WORKDIR` environment variable
+ * - Defaults to current working directory
  */
 
 import envPaths from 'env-paths';
 import * as path from 'path';
 import * as fs from 'fs';
 
-// Get XDG-compliant paths for 'kraxler'
-// suffix: '' disables the default '-nodejs' suffix
-const paths = envPaths('kraxler', { suffix: '' });
+// XDG paths for auth/credentials only
+const xdgPaths = envPaths('kraxler', { suffix: '' });
 
-export interface AllPaths {
-  data: string;
-  config: string;
-  cache: string;
-  log: string;
-  temp: string;
-  database: string;
-  configFile: string;
-  invoices: string;
+// Runtime working directory (set via flag or env var)
+let _workDir: string | null = null;
+
+// ============================================================================
+// Working Directory Management
+// ============================================================================
+
+/**
+ * Set the working directory for this session.
+ * Called early in CLI parsing when --workdir is provided.
+ */
+export function setWorkDir(dir: string): void {
+  _workDir = path.resolve(dir);
+  ensureDir(_workDir);
 }
+
+/**
+ * Get the current working directory.
+ * Priority: --workdir flag > KRAXLER_WORKDIR env > process.cwd()
+ */
+export function getWorkDir(): string {
+  if (_workDir) {
+    return _workDir;
+  }
+  if (process.env.KRAXLER_WORKDIR) {
+    return ensureDir(path.resolve(process.env.KRAXLER_WORKDIR));
+  }
+  return process.cwd();
+}
+
+// ============================================================================
+// Directory Helpers
+// ============================================================================
 
 /**
  * Ensure a directory exists
@@ -42,59 +62,81 @@ export function ensureDir(dirPath: string): string {
   return dirPath;
 }
 
-/**
- * Get the data directory path
- * Used for: SQLite database, persistent data
- */
-export function getDataDir(): string {
-  return ensureDir(paths.data);
-}
+// ============================================================================
+// Auth/Config Paths (XDG - system-wide per user)
+// ============================================================================
 
 /**
- * Get the config directory path
- * Used for: User preferences, settings
+ * Get the config directory path (XDG)
+ * Used for: Auth tokens, credentials, user preferences
  */
 export function getConfigDir(): string {
-  return ensureDir(paths.config);
+  return ensureDir(xdgPaths.config);
 }
 
 /**
- * Get the cache directory path
+ * Get the cache directory path (XDG)
  * Used for: Email body cache, temporary data
  */
 export function getCacheDir(): string {
-  return ensureDir(paths.cache);
+  return ensureDir(xdgPaths.cache);
 }
 
 /**
- * Get the log directory path
- * Used for: Log files (future)
+ * Get path to the auth file (Google OAuth tokens)
  */
-export function getLogDir(): string {
-  return ensureDir(paths.log);
+export function getAuthPath(): string {
+  return path.join(getConfigDir(), 'auth.json');
 }
 
+// ============================================================================
+// Working Directory Paths (project-specific)
+// ============================================================================
+
 /**
- * Get path to the main database file
+ * Get path to the database file (in working dir)
  */
 export function getDatabasePath(): string {
-  return path.join(getDataDir(), 'kraxler.db');
+  return path.join(getWorkDir(), 'kraxler.db');
 }
 
 /**
- * Get path to the config file
+ * Get path to the config file (in working dir)
+ * Note: This is project config (situations, sources), not auth
  */
 export function getConfigPath(): string {
-  return path.join(getConfigDir(), 'config.json');
+  return path.join(getWorkDir(), 'kraxler.json');
 }
 
 /**
- * Get the invoices output directory
- * This is special - it stays in cwd since users want invoices in their project
+ * Get the invoices output directory (in working dir)
  */
-export function getInvoicesDir(customPath?: string): string {
-  const dir = customPath || path.join(process.cwd(), 'invoices');
-  return ensureDir(dir);
+export function getInvoicesDir(): string {
+  return ensureDir(path.join(getWorkDir(), 'invoices'));
+}
+
+/**
+ * Get the reports output directory (in working dir)
+ */
+export function getReportsDir(): string {
+  return ensureDir(path.join(getWorkDir(), 'reports'));
+}
+
+// ============================================================================
+// Path Info
+// ============================================================================
+
+export interface AllPaths {
+  // Working directory paths
+  workDir: string;
+  database: string;
+  configFile: string;
+  invoices: string;
+  reports: string;
+  
+  // System paths (XDG)
+  authFile: string;
+  cache: string;
 }
 
 /**
@@ -102,14 +144,13 @@ export function getInvoicesDir(customPath?: string): string {
  */
 export function getAllPaths(): AllPaths {
   return {
-    data: paths.data,
-    config: paths.config,
-    cache: paths.cache,
-    log: paths.log,
-    temp: paths.temp,
+    workDir: getWorkDir(),
     database: getDatabasePath(),
     configFile: getConfigPath(),
-    invoices: path.join(process.cwd(), 'invoices'),
+    invoices: getInvoicesDir(),
+    reports: getReportsDir(),
+    authFile: getAuthPath(),
+    cache: getCacheDir(),
   };
 }
 
@@ -117,10 +158,23 @@ export function getAllPaths(): AllPaths {
  * Print all paths (for debugging)
  */
 export function printPaths(): void {
-  const allPaths = getAllPaths();
+  const p = getAllPaths();
+  const isCustomWorkDir = _workDir !== null || !!process.env.KRAXLER_WORKDIR;
+  
   console.log('\n📁 Kraxler storage locations:\n');
-  console.log(`  Database:  ${allPaths.database}`);
-  console.log(`  Config:    ${allPaths.configFile}`);
-  console.log(`  Cache:     ${allPaths.cache}`);
-  console.log(`  Invoices:  ${allPaths.invoices} (current directory)\n`);
+  console.log('  Working directory:');
+  console.log(`    ${p.workDir}${isCustomWorkDir ? '' : ' (current dir)'}`);
+  console.log(`    ├── kraxler.db      (database)`);
+  console.log(`    ├── kraxler.json    (config)`);
+  console.log(`    ├── invoices/       (downloaded PDFs)`);
+  console.log(`    └── reports/        (generated reports)`);
+  console.log();
+  console.log('  System (per-user):');
+  console.log(`    ${p.authFile}  (Google OAuth)`);
+  console.log(`    ${p.cache}  (email cache)`);
+  console.log();
+  
+  if (!isCustomWorkDir) {
+    console.log('  💡 Tip: Use --workdir <path> or KRAXLER_WORKDIR to change working directory\n');
+  }
 }

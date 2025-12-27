@@ -11,13 +11,13 @@ import * as readline from 'readline';
 import { authenticate } from '@google-cloud/local-auth';
 import { google } from 'googleapis';
 import { OAuth2Client, Credentials } from 'google-auth-library';
-import { getConfigDir } from './paths.js';
+import { getConfigDir, getAuthPath } from './paths.js';
 
 const SCOPES = [
   'https://www.googleapis.com/auth/gmail.readonly',
   'https://www.googleapis.com/auth/userinfo.email'
 ];
-const AUTH_FILE = path.join(getConfigDir(), 'auth.json');
+const AUTH_FILE = getAuthPath();
 
 interface AuthConfig {
   credentials?: {
@@ -34,7 +34,7 @@ function loadAuthConfig(): AuthConfig {
   if (fs.existsSync(AUTH_FILE)) {
     try {
       return JSON.parse(fs.readFileSync(AUTH_FILE, 'utf-8'));
-    } catch (error) {
+    } catch {
       console.error('Error parsing auth config, resetting...');
     }
   }

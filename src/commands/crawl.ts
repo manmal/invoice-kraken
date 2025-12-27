@@ -9,6 +9,11 @@ import {
   updateEmailStatus,
   findDuplicateByHash,
 } from '../lib/db.js';
+import {
+  startAction,
+  completeAction,
+  failAction,
+} from '../lib/action-log.js';
 import { getCached } from '../lib/email-cache.js';
 import { downloadInvoice, closeBrowser } from '../lib/browser.js';
 import { hashFile } from '../utils/hash.js';
@@ -38,6 +43,12 @@ export async function crawlCommand(options: CrawlOptions): Promise<void> {
   }
   
   console.log(`Found ${pendingEmails.length} invoices pending download.\n`);
+  
+  // Start action log
+  const actionId = startAction({
+    action: 'crawl',
+    account,
+  });
   
   const stats: CrawlStats = {
     downloaded: 0,
@@ -140,6 +151,18 @@ export async function crawlCommand(options: CrawlOptions): Promise<void> {
         stats.failed++;
       }
     }
+    // Complete action log
+    completeAction(actionId, {
+      emailsFound: pendingEmails.length,
+      emailsProcessed: stats.downloaded + stats.duplicates + stats.needsLogin + stats.failed,
+      emailsFailed: stats.failed + stats.needsLogin,
+    });
+  } catch (error) {
+    failAction(actionId, error as Error, {
+      emailsFound: pendingEmails.length,
+      emailsProcessed: stats.downloaded + stats.duplicates,
+    });
+    throw error;
   } finally {
     await closeBrowser();
   }

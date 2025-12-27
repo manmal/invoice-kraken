@@ -64,6 +64,10 @@ export interface Email {
   assignment_metadata: string | null;    // JSON with audit trail
   migration_source: string | null;       // 'v1' for migrated records
   
+  // V2.1: Reclassification support
+  situation_hash: string | null;         // Hash of situation+sources at classification time
+  last_classified_at: string | null;     // Timestamp of last classification
+  
   created_at: string;
   updated_at: string;
 }
@@ -358,6 +362,26 @@ export interface ReviewOptions {
   interactive?: boolean;
 }
 
+/** Pipeline stages in execution order */
+export type PipelineStage = 
+  | 'scan'
+  | 'prefilter'
+  | 'classify'
+  | 'extract'
+  | 'crawl'
+  | 'review'
+  | 'report';
+
+export const PIPELINE_STAGES: readonly PipelineStage[] = [
+  'scan',
+  'prefilter', 
+  'classify',
+  'extract',
+  'crawl',
+  'review',
+  'report',
+] as const;
+
 export interface RunOptions extends ScanOptions {
   batchSize: number;
   autoDedup: boolean;
@@ -365,4 +389,12 @@ export interface RunOptions extends ScanOptions {
   model?: string;
   provider?: string;
   noInteractive?: boolean;
+  
+  // Reclassification support
+  from?: PipelineStage;      // Start from this stage
+  force?: boolean;           // Ignore situation hashes, reprocess anyway
+  dateRangeOverride?: {      // Override date range for reclassification
+    from: string;
+    to: string;
+  };
 }

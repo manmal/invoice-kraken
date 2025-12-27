@@ -6,7 +6,8 @@
  */
 
 import * as fs from 'fs';
-import { getConfigDir, getConfigPath } from './paths.js';
+import * as path from 'path';
+import { getConfigPath } from './paths.js';
 import type { 
   KraxlerConfig, 
   LegacyKraxlerConfig,
@@ -20,8 +21,10 @@ import type {
   HomeOfficeType,
 } from './jurisdictions/interface.js';
 
-const CONFIG_DIR: string = getConfigDir();
-const CONFIG_FILE: string = getConfigPath();
+// Note: These are functions, not constants, so they respect --workdir
+function getConfigFile(): string {
+  return getConfigPath();
+}
 
 // ============================================================================
 // Default Configuration
@@ -61,8 +64,9 @@ export function clearConfigCache(): void {
  * Ensure config directory exists.
  */
 function ensureConfigDir(): void {
-  if (!fs.existsSync(CONFIG_DIR)) {
-    fs.mkdirSync(CONFIG_DIR, { recursive: true });
+  const configDir = path.dirname(getConfigFile());
+  if (!fs.existsSync(configDir)) {
+    fs.mkdirSync(configDir, { recursive: true });
   }
 }
 
@@ -75,9 +79,9 @@ export function loadConfig(): KraxlerConfig {
   
   ensureConfigDir();
   
-  if (fs.existsSync(CONFIG_FILE)) {
+  if (fs.existsSync(getConfigFile())) {
     try {
-      const data = fs.readFileSync(CONFIG_FILE, 'utf-8');
+      const data = fs.readFileSync(getConfigFile(), 'utf-8');
       const parsed = JSON.parse(data);
       
       // Check version and migrate if needed
@@ -89,7 +93,7 @@ export function loadConfig(): KraxlerConfig {
       } else {
         cachedConfig = { ...DEFAULT_CONFIG, ...parsed } as KraxlerConfig;
       }
-    } catch (error) {
+    } catch {
       console.error('Warning: Could not parse config file, using defaults');
       cachedConfig = { ...DEFAULT_CONFIG };
     }
@@ -106,7 +110,7 @@ export function loadConfig(): KraxlerConfig {
 export function saveConfig(config: KraxlerConfig): void {
   ensureConfigDir();
   cachedConfig = config;
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+  fs.writeFileSync(getConfigFile(), JSON.stringify(config, null, 2));
 }
 
 /**
@@ -388,7 +392,7 @@ export function printConfig(): void {
   }
   
   console.log(`║                                                                            ║`);
-  console.log(`║  Config: ${CONFIG_FILE.replace(process.env.HOME || '', '~').padEnd(60)}  ║`);
+  console.log(`║  Config: ${getConfigFile().replace(process.env.HOME || '', '~').padEnd(60)}  ║`);
   console.log(`╚════════════════════════════════════════════════════════════════════════════╝
 `);
 }

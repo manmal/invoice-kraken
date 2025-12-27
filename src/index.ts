@@ -23,7 +23,7 @@ import { closeDb } from './lib/db.js';
 import { closeBrowser } from './lib/browser.js';
 import { needsSetup } from './lib/config.js';
 import { setupCommand } from './commands/setup.js';
-import { printPaths, getAllPaths } from './lib/paths.js';
+import { printPaths, getAllPaths, setWorkDir } from './lib/paths.js';
 import { setModelOverrides } from './lib/models.js';
 
 const program: Command = new Command();
@@ -31,7 +31,15 @@ const program: Command = new Command();
 program
   .name('kraxler')
   .description('🇦🇹🇩🇪 Invoice extraction from Gmail with AI-powered classification')
-  .version('0.1.0');
+  .version('0.1.0')
+  .option('-w, --workdir <path>', 'Working directory for db, invoices, reports')
+  .hook('preAction', (thisCommand) => {
+    // Set workdir before any command runs
+    const opts = thisCommand.opts();
+    if (opts.workdir) {
+      setWorkDir(opts.workdir);
+    }
+  });
 
 // ============================================================================
 // MAIN PIPELINE COMMANDS
@@ -40,7 +48,7 @@ program
 program
   .command('scan')
   .description('Stage 1: Scan Gmail for invoice-related emails')
-  .requiredOption('-a, --account <email>', 'Gmail account to use')
+  .requiredOption('-a, --account <emails...>', 'Gmail account(s) to use')
   .option('-y, --year <year>', 'Year to scan (e.g., 2025)')
   .option('-m, --month <month>', 'Month to scan (e.g., 2025-12)')
   .option('-q, --quarter <quarter>', 'Quarter to scan (e.g., 2025-Q4)')
@@ -48,7 +56,10 @@ program
   .option('--to <date>', 'End date (YYYY-MM-DD)')
   .action(async (options: any): Promise<void> => {
     try {
-      await scanCommand(options);
+      const accounts = Array.isArray(options.account) ? options.account : [options.account];
+      for (const account of accounts) {
+        await scanCommand({ ...options, account });
+      }
     } catch (error: unknown) {
       console.error('Error:', (error as Error).message);
       process.exit(1);
@@ -60,7 +71,7 @@ program
 program
   .command('extract')
   .description('Stage 2: Extract invoices from emails using AI classification')
-  .requiredOption('-a, --account <email>', 'Gmail account to use')
+  .requiredOption('-a, --account <emails...>', 'Gmail account(s) to use')
   .option('-b, --batch-size <n>', 'Number of emails to process per batch', '10')
   .option('--auto-dedup', 'Automatically mark high-confidence duplicates')
   .option('--strict', 'Also auto-mark medium-confidence duplicates')
@@ -72,7 +83,10 @@ program
         setModelOverrides({ model: options.model, provider: options.provider });
       }
       options.batchSize = parseInt(options.batchSize, 10);
-      await extractCommand(options);
+      const accounts = Array.isArray(options.account) ? options.account : [options.account];
+      for (const account of accounts) {
+        await extractCommand({ ...options, account });
+      }
     } catch (error: unknown) {
       console.error('Error:', (error as Error).message);
       process.exit(1);
@@ -84,12 +98,15 @@ program
 program
   .command('crawl')
   .description('Stage 3: Crawl links to download remaining invoices via browser')
-  .requiredOption('-a, --account <email>', 'Gmail account to use')
+  .requiredOption('-a, --account <emails...>', 'Gmail account(s) to use')
   .option('-b, --batch-size <n>', 'Number of invoices to process per batch', '5')
   .action(async (options: any): Promise<void> => {
     try {
       options.batchSize = parseInt(options.batchSize, 10);
-      await crawlCommand(options);
+      const accounts = Array.isArray(options.account) ? options.account : [options.account];
+      for (const account of accounts) {
+        await crawlCommand({ ...options, account });
+      }
     } catch (error: unknown) {
       console.error('Error:', (error as Error).message);
       process.exit(1);
@@ -101,7 +118,7 @@ program
 program
   .command('review')
   .description('Stage 4: Review items needing manual handling')
-  .requiredOption('-a, --account <email>', 'Gmail account to use')
+  .requiredOption('-a, --account <emails...>', 'Gmail account(s) to use')
   .option('-f, --format <format>', 'Output format: table, json, markdown', 'table')
   .option('-d, --deductible <type>', 'Filter by deductibility: full, partial, none, unclear')
   .option('--summary', 'Show tax deductibility summary')
@@ -111,7 +128,10 @@ program
   .action(async (options: any): Promise<void> => {
     try {
       if (options.year) options.year = parseInt(options.year, 10);
-      await reviewCommand(options);
+      const accounts = Array.isArray(options.account) ? options.account : [options.account];
+      for (const account of accounts) {
+        await reviewCommand({ ...options, account });
+      }
     } catch (error: unknown) {
       console.error('Error:', (error as Error).message);
       process.exit(1);
@@ -123,7 +143,7 @@ program
 program
   .command('report')
   .description('Stage 5: Generate JSONL/JSON/CSV report of extracted invoices')
-  .requiredOption('-a, --account <email>', 'Gmail account to use')
+  .requiredOption('-a, --account <emails...>', 'Gmail account(s) to use')
   .option('-y, --year <year>', 'Year to report (e.g., 2025)')
   .option('-m, --month <month>', 'Month to report (e.g., 2025-12)')
   .option('-q, --quarter <quarter>', 'Quarter to report (e.g., 2025-Q4)')
@@ -134,7 +154,8 @@ program
   .option('--status <status>', 'Filter by status: downloaded, manual, all', 'downloaded')
   .action(async (options: any): Promise<void> => {
     try {
-      await reportCommand(options);
+      const accounts = Array.isArray(options.account) ? options.account : [options.account];
+      await reportCommand({ ...options, accounts });
     } catch (error: unknown) {
       console.error('Error:', (error as Error).message);
       process.exit(1);
@@ -146,12 +167,14 @@ program
 program
   .command('run')
   .description('Run full pipeline: scan → extract → crawl → review → report')
-  .requiredOption('-a, --account <email>', 'Gmail account to use')
+  .requiredOption('-a, --account <emails...>', 'Gmail account(s) to use')
   .option('-y, --year <year>', 'Year to process (e.g., 2025)')
   .option('-m, --month <month>', 'Month to process (e.g., 2025-12)')
   .option('-q, --quarter <quarter>', 'Quarter to process (e.g., 2025-Q4)')
   .option('--from <date>', 'Start date (YYYY-MM-DD)')
   .option('--to <date>', 'End date (YYYY-MM-DD)')
+  .option('--from-stage <stage>', 'Start from stage: scan, prefilter, classify, extract, crawl, review, report')
+  .option('--force', 'Force reclassification, ignore situation hashes')
   .option('-b, --batch-size <n>', 'Number of emails to process per batch', '10')
   .option('--auto-dedup', 'Automatically mark high-confidence duplicates')
   .option('--strict', 'Also auto-mark medium-confidence duplicates')
@@ -165,7 +188,14 @@ program
       }
       options.batchSize = parseInt(options.batchSize, 10);
       options.noInteractive = !options.interactive;
-      await runCommand(options);
+      // Map --from-stage to from (for run command)
+      if (options.fromStage) {
+        options.from = options.fromStage;
+      }
+      const accounts = Array.isArray(options.account) ? options.account : [options.account];
+      for (const account of accounts) {
+        await runCommand({ ...options, account });
+      }
     } catch (error: unknown) {
       console.error('Error:', (error as Error).message);
       process.exit(1);
@@ -182,11 +212,14 @@ program
 program
   .command('status')
   .description('Show completion status for a year')
-  .requiredOption('-a, --account <email>', 'Gmail account to use')
+  .requiredOption('-a, --account <emails...>', 'Gmail account(s) to use')
   .option('-y, --year <year>', 'Year to show status for (default: current year)')
   .action(async (options: any): Promise<void> => {
     try {
-      await statusCommand(options);
+      const accounts = Array.isArray(options.account) ? options.account : [options.account];
+      for (const account of accounts) {
+        await statusCommand({ ...options, account });
+      }
     } catch (error: unknown) {
       console.error('Error:', (error as Error).message);
       process.exit(1);
@@ -198,12 +231,15 @@ program
 program
   .command('log')
   .description('Show action history')
-  .requiredOption('-a, --account <email>', 'Gmail account to use')
+  .requiredOption('-a, --account <emails...>', 'Gmail account(s) to use')
   .option('-l, --limit <n>', 'Number of actions to show', '20')
   .option('--failed', 'Show only failed/interrupted actions')
   .action(async (options: any): Promise<void> => {
     try {
-      await logCommand(options);
+      const accounts = Array.isArray(options.account) ? options.account : [options.account];
+      for (const account of accounts) {
+        await logCommand({ ...options, account });
+      }
     } catch (error: unknown) {
       console.error('Error:', (error as Error).message);
       process.exit(1);

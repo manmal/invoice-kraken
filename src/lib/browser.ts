@@ -284,7 +284,7 @@ export async function downloadInvoice(url: string, outputPath: string, options: 
     }
     
     // Check if it's a direct PDF download
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const contentType = await page.evaluate('document.contentType') as string | undefined;
     if (contentType === 'application/pdf') {
       // Save the PDF directly
