@@ -2,9 +2,9 @@
   <img src="assets/logo.png" alt="Kraxler" width="200">
 </p>
 
-# 🇦🇹 Kraxler
+# 🇦🇹🇩🇪 Kraxler
 
-Extract invoices from Gmail with AI-powered classification for 🇦🇹 Austrian tax deductions.
+Extract invoices from Gmail with AI-powered classification for 🇦🇹 Austrian and 🇩🇪 German tax deductions.
 
 > 🌍 **Contributions welcome!** PRs for other countries or alternative invoice classification schemes are very welcome!
 
@@ -129,7 +129,7 @@ npx kraxler report -a your@gmail.com --year 2025 -f csv    # Spreadsheet
 | `none`    | 🚫   | 0%         | ❌ No        | Personal expenses            |
 | `unclear` | ❓   | ?          | ?            | Needs review                 |
 
-\* Vehicle VAT: No recovery for ICE/hybrid, full recovery for electric vehicles (Austrian rule)
+\* Vehicle VAT: No recovery for ICE/hybrid, full recovery for electric vehicles (🇦🇹 Austrian & 🇩🇪 German rules)
 
 See [docs/austrian-tax-deductibility.md](docs/austrian-tax-deductibility.md) for details.
 

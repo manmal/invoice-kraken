@@ -362,7 +362,7 @@ export function printConfig(): void {
   
   console.log(`
 ╔════════════════════════════════════════════════════════════════════════════╗
-║  🇦🇹 KRAXLER CONFIGURATION (v${config.version})                                       ║
+║  🇦🇹🇩🇪 KRAXLER CONFIGURATION (v${config.version})                                    ║
 ╠════════════════════════════════════════════════════════════════════════════╣`);
   
   console.log(`║  Jurisdiction: ${config.jurisdiction.padEnd(58)}║`);

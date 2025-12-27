@@ -30,7 +30,7 @@ const program: Command = new Command();
 
 program
   .name('kraxler')
-  .description('🇦🇹 Invoice extraction from Gmail with AI-powered classification')
+  .description('🇦🇹🇩🇪 Invoice extraction from Gmail with AI-powered classification')
   .version('0.1.0');
 
 // ============================================================================

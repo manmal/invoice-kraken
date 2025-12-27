@@ -137,11 +137,13 @@ function displaySituation(sit: Situation, index: number): void {
     none: "None",
   };
 
+  const flag = sit.jurisdiction === "AT" ? "🇦🇹" : sit.jurisdiction === "DE" ? "🇩🇪" : "🏳️";
+
   console.log(
     `┌──────────────────────────────────────────────────────────────────────────────┐`
   );
   console.log(`│ ${String(index).padEnd(2)} ${dateRange.padEnd(73)}│`);
-  console.log(`│    🇦🇹 ${sit.jurisdiction} · ${vatLabel.padEnd(55)}│`);
+  console.log(`│    ${flag} ${sit.jurisdiction} · ${vatLabel.padEnd(55)}│`);
   console.log(`│    ${carInfo.padEnd(72)}│`);
   console.log(
     `│    📱 Telecom: ${sit.telecomBusinessPercent}% · 🌐 Internet: ${
@@ -193,7 +195,7 @@ async function runFirstTimeSetup(
 ): Promise<KraxlerConfig> {
   console.log(`
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║  🇦🇹 KRAXLER SETUP                                                           ║
+║  🇦🇹🇩🇪 KRAXLER SETUP                                                         ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║                                                                              ║
 ║  Welcome! Let's configure your tax situation.                                ║
