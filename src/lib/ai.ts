@@ -22,12 +22,9 @@ import path from 'path';
 import os from 'os';
 import fs from 'fs';
 import { getModelForTask, DEFAULT_MODEL_CONFIG } from './models.js';
-import {
-  loadConfig,
-  getVehicleVatRecovery,
-  getTelecomBusinessPercent,
-  isKleinunternehmer,
-} from './config.js';
+import { loadConfig } from './config.js';
+import type { KraxlerConfig } from '../types.js';
+import { getTaxRules } from './jurisdictions/registry.js';
 import { emptyUsage, addUsage } from './tokens.js';
 import type { Usage } from './tokens.js';
 import { getEmailBodiesBatch, getTruncatedBody } from './email-cache.js';
@@ -216,13 +213,48 @@ interface EnrichedEmail extends Partial<Email> {
 }
 
 /**
+ * Get current situation from config (latest ongoing or most recent).
+ */
+function getCurrentSituation(config: KraxlerConfig): { 
+  hasCompanyCar: boolean;
+  companyCarType: string | null;
+  vatStatus: string;
+  telecomPercent: number;
+} {
+  if (config.situations.length === 0) {
+    return {
+      hasCompanyCar: false,
+      companyCarType: null,
+      vatStatus: 'regelbesteuert',
+      telecomPercent: 50,
+    };
+  }
+  
+  // Find ongoing situation or most recent
+  const situation = config.situations.find(s => s.to === null) || 
+                    config.situations[config.situations.length - 1];
+  
+  return {
+    hasCompanyCar: situation.hasCompanyCar,
+    companyCarType: situation.companyCarType,
+    vatStatus: situation.vatStatus,
+    telecomPercent: situation.telecomBusinessPercent,
+  };
+}
+
+/**
  * Build the email classification prompt with user config context
  */
 function buildClassificationPrompt(emails: EnrichedEmail[]): string {
   const config = loadConfig();
-  const vehicleVat = getVehicleVatRecovery();
-  const telecomPercent = getTelecomBusinessPercent();
-  const kleinunternehmer = isKleinunternehmer();
+  const currentSituation = getCurrentSituation(config);
+  
+  // Get tax rules for the jurisdiction
+  const taxRules = getTaxRules(config.jurisdiction || 'AT');
+  
+  // Calculate values from situation
+  const kleinunternehmer = currentSituation.vatStatus === 'kleinunternehmer';
+  const telecomPercent = currentSituation.telecomPercent;
 
   const emailsJson = JSON.stringify(
     emails.map((e) => ({
@@ -240,18 +272,11 @@ function buildClassificationPrompt(emails: EnrichedEmail[]): string {
     2
   );
 
-  // Build context based on user config
-  let vehicleContext = 'No company car configured';
-  if (config.has_company_car) {
-    if (config.company_car_type === 'electric') {
-      vehicleContext = 'ELECTRIC company car - FULL VAT recovery on vehicle expenses!';
-    } else if (config.company_car_type === 'hybrid_plugin') {
-      vehicleContext = 'Plug-in hybrid company car - partial VAT recovery (check with Steuerberater)';
-    } else {
-      vehicleContext = 'ICE/Hybrid company car - NO VAT recovery on vehicle expenses (Austrian rule)';
-    }
-  }
+  // Get jurisdiction-specific instructions
+  const situation = config.situations.find(s => s.to === null) || config.situations[config.situations.length - 1] || config.situations[0];
+  const taxInstructions = taxRules.getPromptInstructions(situation);
 
+  // Build context based on user config
   const vatContext = kleinunternehmer
     ? 'User is KLEINUNTERNEHMER - NO VAT recovery on ANY expenses!'
     : 'User is NOT Kleinunternehmer - VAT recovery applies per category';
@@ -280,7 +305,7 @@ NO - These are NOT invoices:
 ═══════════════════════════════════════════════════════════════════════════════
 
 USER CONFIGURATION:
-- ${vehicleContext}
+- Jurisdiction: ${config.jurisdiction || 'AT'}
 - ${vatContext}
 - Telecom/internet business use: ${telecomPercent}%
 
@@ -296,50 +321,9 @@ For each email, determine:
    - Amount (with currency, e.g., "149.00 €")
    - Invoice date (YYYY-MM-DD format)
    - Vendor/product name for filename (e.g., "1password_family", "anthropic_api", "hetzner_cloud", "apple_icloud", "spusu_mobile")
-4. Tax deductibility for Austrian Einzelunternehmer (sole proprietor) freelance software developer:
+4. Tax deductibility for ${config.jurisdiction || 'AT'} freelance software developer:
    
-   IMPORTANT AUSTRIAN TAX RULES:
-   - Income Tax (EST) and VAT (Vorsteuer) deductibility are SEPARATE
-   ${config.has_company_car ? `- Company car type: ${config.company_car_type?.toUpperCase()}` : '- No company car'}
-   - ${vehicleVat.reason}
-   - Business meals: 50% income tax, but 100% VAT recovery${kleinunternehmer ? ' (except Kleinunternehmer!)' : ''}
-   
-   Categories:
-   - full: 100% income tax + ${kleinunternehmer ? 'NO' : '100%'} VAT recovery:
-     * Software, cloud services, dev tools, hosting, domains
-     * Professional services (accountant, legal)
-     * Hardware for work (computers, monitors, keyboards)
-     * Education (tech courses, books, conferences)
-   
-   - vehicle: 100% income tax, ${vehicleVat.recoverable ? 'WITH' : 'NO'} VAT recovery:
-     * Fuel/petrol (Tankstelle: OMV, BP, Shell, etc.)
-     * Car service/repair, car wash
-     * Tolls (ASFINAG), Vignette
-     * ÖAMTC, ARBÖ membership
-     * Parking (business)
-     * Car insurance
-     ${vehicleVat.recoverable ? '* Electric vehicle = full VAT recovery!' : '* ICE/Hybrid = no VAT recovery (Austrian rule)'}
-   
-   - meals: 50% income tax, ${kleinunternehmer ? 'NO' : '100%'} VAT recovery:
-     * Business meals with clients
-     * Restaurant expenses for business purposes
-   
-   - telecom: ${telecomPercent}% for both EST and VAT:
-     * Mobile phone (A1, Magenta, Drei, spusu, etc.)
-     * Internet (${telecomPercent}% business use)
-   
-   - none: Not deductible (personal):
-     * Entertainment (Netflix, Spotify, streaming)
-     * Groceries
-     * Personal restaurants (not business meals)
-     * Cosmetics, personal care
-     * Health supplements
-     * Candy/sweets shops
-   
-   - unclear: Needs manual review:
-     * Amazon (could be business or personal)
-     * General electronics stores (MediaMarkt, Saturn)
-     * Mixed-use items
+   ${taxInstructions}
 
 Emails to analyze:
 ${emailsJson}
@@ -353,10 +337,10 @@ Return ONLY a valid JSON array with this structure:
   "amount": "string or null (e.g., '149.00 €')",
   "invoice_date": "YYYY-MM-DD or null",
   "vendor_product": "snake_case name for filename (e.g., 'anthropic_api', 'hetzner_cloud')",
-  "deductible": "full"|"vehicle"|"meals"|"telecom"|"none"|"unclear",
+  "deductible": "full"|"vehicle"|"meals"|"telecom"|"gifts"|"none"|"unclear",
   "deductible_reason": "brief explanation",
-  "income_tax_percent": number or null (100 for full/vehicle, 50 for meals/telecom, 0 for none),
-  "vat_recoverable": true/false/null (false for vehicle!, true for meals despite 50% EST),
+  "income_tax_percent": number or null (100 for full/vehicle, 50/70 for meals, etc.),
+  "vat_recoverable": true/false/null (false for vehicle in AT usually, etc.),
   "confidence": "high"|"medium"|"low",
   "notes": "any relevant notes"
 }]`;
@@ -371,7 +355,7 @@ export interface EmailClassificationResult {
   amount?: string | null;
   invoice_date?: string | null;
   vendor_product?: string | null;
-  deductible?: 'full' | 'vehicle' | 'meals' | 'telecom' | 'none' | 'unclear';
+  deductible?: 'full' | 'vehicle' | 'meals' | 'telecom' | 'gifts' | 'none' | 'unclear';
   deductible_reason?: string | null;
   income_tax_percent?: number | null;
   vat_recoverable?: boolean | null;

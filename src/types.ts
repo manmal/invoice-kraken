@@ -2,6 +2,23 @@
  * Core type definitions for Kraxler
  */
 
+// Re-export jurisdiction types for convenience
+export type {
+  Situation,
+  IncomeSource,
+  IncomeCategory,
+  AllocationRule,
+  AllocationStrategy,
+  Allocation,
+  VatStatus,
+  HomeOfficeType,
+  ValidationError,
+  VatRecoveryResult,
+  IncomeTaxResult,
+  AllocationResult,
+  AllocationSource,
+} from './lib/jurisdictions/interface.js';
+
 // ============================================================================
 // Email & Database Types
 // ============================================================================
@@ -38,6 +55,15 @@ export interface Email {
   file_verified_at: string | null;
   prefilter_reason: string | null;
   notes: string | null;
+  
+  // V2: Situation and allocation tracking
+  situation_id: number | null;
+  income_source_id: string | null;
+  allocation_json: string | null;        // JSON array of {sourceId, percent}
+  assignment_status: AssignmentStatus | null;
+  assignment_metadata: string | null;    // JSON with audit trail
+  migration_source: string | null;       // 'v1' for migrated records
+  
   created_at: string;
   updated_at: string;
 }
@@ -65,12 +91,21 @@ export type DeductibleCategory =
   | 'vehicle'
   | 'meals'
   | 'telecom'
+  | 'gifts'
   | 'partial'
   | 'none'
   | 'unclear';
 
 // Reviewable categories exclude 'unclear' - these are what users can select
 export type ReviewableCategory = Exclude<DeductibleCategory, 'unclear'>;
+
+export type AssignmentStatus =
+  | 'rule_match'
+  | 'ai_suggested'
+  | 'category_default'
+  | 'heuristic'
+  | 'manual_review'
+  | 'confirmed';
 
 // ============================================================================
 // Manual Review Types
@@ -152,10 +187,47 @@ export interface GmailAttachment {
 }
 
 // ============================================================================
-// Config Types
+// Config Types (V2)
 // ============================================================================
 
+import type { 
+  Situation, 
+  IncomeSource, 
+  AllocationRule 
+} from './lib/jurisdictions/interface.js';
+
 export interface KraxlerConfig {
+  /** Config version (2 for new format) */
+  version: number;
+  
+  /** Jurisdiction code (AT, DE, CH) - all situations use same jurisdiction */
+  jurisdiction: string;
+  
+  /** User's tax situations over time */
+  situations: Situation[];
+  
+  /** User's income sources */
+  incomeSources: IncomeSource[];
+  
+  /** User-defined allocation rules */
+  allocationRules: AllocationRule[];
+  
+  /** Category defaults: which income source for each category */
+  categoryDefaults: Partial<Record<DeductibleCategory, string>>;
+  
+  /** Connected email accounts */
+  accounts: string[];
+  
+  /** Initial setup completed? */
+  setupCompleted: boolean;
+  
+  /** AI model configuration */
+  modelPreset?: string;
+  models?: Record<string, ModelConfig>;
+}
+
+// Legacy config type for migration
+export interface LegacyKraxlerConfig {
   tax_jurisdiction: string;
   has_company_car: boolean | null;
   company_car_type: CompanyCarType | null;

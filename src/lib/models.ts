@@ -6,7 +6,7 @@
  * 1. CLI flags (--model, --provider) - overrides all tasks
  * 2. Environment variables (KRAXLER_MODEL, KRAXLER_PROVIDER)
  * 3. Per-task config in config.json → models object
- * 4. Preset in config.json → model_preset
+ * 4. Preset in config.json → modelPreset
  * 5. Hardcoded defaults below
  * 
  * Run `npx kraxler models` to see available models and current configuration.
@@ -315,7 +315,7 @@ function resolveModel(provider: string, modelId: string): RegistryModel | null {
  * 1. CLI override (--model, --provider) - applies to all tasks
  * 2. Environment variables (KRAXLER_MODEL, KRAXLER_PROVIDER)
  * 3. Per-task config in config.json → models[task]
- * 4. Preset from config.json → model_preset
+ * 4. Preset from config.json → modelPreset
  * 5. Hardcoded defaults
  */
 export function getModelForTask(task: string): ModelForTaskResult | null {
@@ -363,8 +363,8 @@ export function getModelForTask(task: string): ModelForTaskResult | null {
   }
   
   // 3. Preset from config.json
-  if (config.model_preset && MODEL_PRESETS[config.model_preset]) {
-    const preset = MODEL_PRESETS[config.model_preset];
+  if (config.modelPreset && MODEL_PRESETS[config.modelPreset]) {
+    const preset = MODEL_PRESETS[config.modelPreset];
     const tier: TierType = defaultConfig.tier || 'balanced';
     const candidates = preset[tier] || preset.balanced;
     const model = findFirstAvailable(candidates);
@@ -373,10 +373,10 @@ export function getModelForTask(task: string): ModelForTaskResult | null {
         model,
         thinkingLevel: defaultConfig.thinkingLevel || 'off',
         description: defaultConfig.description,
-        source: `preset: ${config.model_preset}`,
+        source: `preset: ${config.modelPreset}`,
       };
     }
-    console.warn(`No models available for preset '${config.model_preset}', tier '${tier}'`);
+    console.warn(`No models available for preset '${config.modelPreset}', tier '${tier}'`);
   }
   
   // 4. Hardcoded defaults
@@ -420,8 +420,8 @@ export function listModelConfig(): void {
   }
   
   // Show preset if set
-  if (config.model_preset) {
-    console.log(`Active preset: ${config.model_preset}`);
+  if (config.modelPreset) {
+    console.log(`Active preset: ${config.modelPreset}`);
     console.log();
   }
   

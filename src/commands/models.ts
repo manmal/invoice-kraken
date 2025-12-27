@@ -83,11 +83,11 @@ export async function modelsCommand(options: ModelsCommandOptions): Promise<void
   const overrides = getModelOverrides();
   const config = loadConfig();
   
-  if (overrides.model || overrides.provider || config.model_preset || config.models) {
+  if (overrides.model || overrides.provider || config.modelPreset || config.models) {
     console.log('Current customizations:');
     if (overrides.model) console.log(`  CLI/env model: ${overrides.model}`);
     if (overrides.provider) console.log(`  CLI/env provider: ${overrides.provider}`);
-    if (config.model_preset) console.log(`  Preset: ${config.model_preset}`);
+    if (config.modelPreset) console.log(`  Preset: ${config.modelPreset}`);
     if (config.models) {
       console.log(`  Per-task overrides: ${Object.keys(config.models).join(', ')}`);
     }

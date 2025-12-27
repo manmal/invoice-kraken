@@ -1,20 +1,33 @@
 /**
  * SQLite database helpers using better-sqlite3
+ * 
+ * Handles schema creation, migrations, and CRUD operations.
  */
 
 import Database from 'better-sqlite3';
 import type { Database as DatabaseType, RunResult } from 'better-sqlite3';
 import { getDatabasePath } from './paths.js';
-import type { Email, EmailStatus, DeductibleCategory, ReviewableCategory, ManualReview } from '../types.js';
+import type { 
+  Email, 
+  EmailStatus, 
+  DeductibleCategory, 
+  ReviewableCategory, 
+  ManualReview,
+  AssignmentStatus,
+} from '../types.js';
+// Allocation type used in allocation_json column
+import type { Allocation as _Allocation } from './jurisdictions/interface.js';
 
 const DB_PATH: string = getDatabasePath();
 
 let db: DatabaseType | null = null;
 
+// ============================================================================
+// Database Connection
+// ============================================================================
+
 export function getDb(): DatabaseType {
   if (!db) {
-    // Note: better-sqlite3 creates the database by default if it doesn't exist
-    // (when fileMustExist is false/undefined)
     db = new Database(DB_PATH);
     db.exec('PRAGMA journal_mode = WAL');
     initSchema();
@@ -22,9 +35,21 @@ export function getDb(): DatabaseType {
   return db;
 }
 
+export function closeDb(): void {
+  if (db) {
+    db.close();
+    db = null;
+  }
+}
+
+// ============================================================================
+// Schema Initialization
+// ============================================================================
+
 function initSchema(): void {
   if (!db) return;
   
+  // Main emails table
   db.exec(`
     CREATE TABLE IF NOT EXISTS emails (
       id TEXT PRIMARY KEY,
@@ -66,27 +91,108 @@ function initSchema(): void {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_emails_unique ON emails(id, account);
   `);
   
-  // Migration: Add new columns for Austrian tax rules (v2)
-  try {
-    db.exec(`ALTER TABLE emails ADD COLUMN income_tax_percent INTEGER`);
-  } catch (e) { /* column may already exist */ }
+  // Run migrations for new columns
+  runMigrations();
   
-  try {
-    db.exec(`ALTER TABLE emails ADD COLUMN vat_recoverable INTEGER`); // 0 = false, 1 = true
-  } catch (e) { /* column may already exist */ }
+  // Create situations table (synced from config)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS situations (
+      id INTEGER PRIMARY KEY,
+      from_date TEXT NOT NULL,
+      to_date TEXT,
+      jurisdiction TEXT NOT NULL,
+      vat_status TEXT NOT NULL,
+      has_company_car INTEGER NOT NULL,
+      company_car_type TEXT,
+      company_car_name TEXT,
+      car_business_percent INTEGER,
+      telecom_business_percent INTEGER NOT NULL,
+      internet_business_percent INTEGER NOT NULL,
+      home_office_type TEXT NOT NULL,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
   
-  try {
-    db.exec(`ALTER TABLE emails ADD COLUMN file_hash TEXT`);
-  } catch (e) { /* column may already exist */ }
+  // Create income_sources table (synced from config)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS income_sources (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      category TEXT NOT NULL,
+      valid_from TEXT NOT NULL,
+      valid_to TEXT,
+      telecom_percent_override INTEGER,
+      internet_percent_override INTEGER,
+      vehicle_percent_override INTEGER,
+      notes TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
   
-  try {
-    db.exec(`ALTER TABLE emails ADD COLUMN file_verified_at TEXT`);
-  } catch (e) { /* column may already exist */ }
+  // Create allocation_rules table (synced from config)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS allocation_rules (
+      id TEXT PRIMARY KEY,
+      vendor_domain TEXT,
+      vendor_pattern TEXT,
+      deductible_category TEXT,
+      min_amount_cents INTEGER,
+      strategy TEXT NOT NULL,
+      allocations_json TEXT NOT NULL,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
   
-  try {
-    db.exec(`ALTER TABLE emails ADD COLUMN prefilter_reason TEXT`);
-  } catch (e) { /* column may already exist */ }
+  // Create manual_reviews table
+  initManualReviewsTable();
 }
+
+/**
+ * Run column migrations for emails table.
+ */
+function runMigrations(): void {
+  if (!db) return;
+  
+  const migrations = [
+    // V1 migrations
+    'ALTER TABLE emails ADD COLUMN income_tax_percent INTEGER',
+    'ALTER TABLE emails ADD COLUMN vat_recoverable INTEGER',
+    'ALTER TABLE emails ADD COLUMN file_hash TEXT',
+    'ALTER TABLE emails ADD COLUMN file_verified_at TEXT',
+    'ALTER TABLE emails ADD COLUMN prefilter_reason TEXT',
+    
+    // V2 migrations
+    'ALTER TABLE emails ADD COLUMN situation_id INTEGER',
+    'ALTER TABLE emails ADD COLUMN income_source_id TEXT',
+    'ALTER TABLE emails ADD COLUMN allocation_json TEXT',
+    'ALTER TABLE emails ADD COLUMN assignment_status TEXT',
+    'ALTER TABLE emails ADD COLUMN assignment_metadata TEXT',
+    'ALTER TABLE emails ADD COLUMN migration_source TEXT',
+  ];
+  
+  for (const sql of migrations) {
+    try {
+      db.exec(sql);
+    } catch (e) {
+      // Column may already exist - ignore
+    }
+  }
+  
+  // Create new indexes
+  try {
+    db.exec('CREATE INDEX IF NOT EXISTS idx_emails_situation_id ON emails(situation_id)');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_emails_income_source_id ON emails(income_source_id)');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_emails_assignment_status ON emails(assignment_status)');
+  } catch (e) {
+    // Indexes may already exist
+  }
+}
+
+// ============================================================================
+// Email CRUD Operations
+// ============================================================================
 
 export interface EmailInsertData {
   id: string;
@@ -169,6 +275,78 @@ export function updateEmailStatus(id: string, account: string, status: EmailStat
   return stmt.run(params);
 }
 
+// ============================================================================
+// V2: Allocation Updates
+// ============================================================================
+
+export interface AllocationUpdate {
+  situationId: number | null;
+  incomeSourceId: string | null;
+  allocationJson: string | null;
+  assignmentStatus: AssignmentStatus;
+  assignmentMetadata: string | null;
+}
+
+export function updateEmailAllocation(
+  id: string,
+  account: string,
+  allocation: AllocationUpdate
+): RunResult {
+  const db = getDb();
+  const stmt = db.prepare(`
+    UPDATE emails SET
+      situation_id = @situationId,
+      income_source_id = @incomeSourceId,
+      allocation_json = @allocationJson,
+      assignment_status = @assignmentStatus,
+      assignment_metadata = @assignmentMetadata,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = @id AND account = @account
+  `);
+  
+  return stmt.run({
+    id,
+    account,
+    situationId: allocation.situationId,
+    incomeSourceId: allocation.incomeSourceId,
+    allocationJson: allocation.allocationJson,
+    assignmentStatus: allocation.assignmentStatus,
+    assignmentMetadata: allocation.assignmentMetadata,
+  });
+}
+
+export function getEmailsNeedingAllocation(account: string, limit: number = 100): Email[] {
+  const db = getDb();
+  const stmt = db.prepare(`
+    SELECT * FROM emails 
+    WHERE account = @account 
+      AND status = 'downloaded'
+      AND (assignment_status IS NULL OR assignment_status = 'manual_review')
+    ORDER BY date ASC
+    LIMIT @limit
+  `);
+  return stmt.all({ account, limit }) as Email[];
+}
+
+export function getEmailsByAssignmentStatus(
+  account: string,
+  status: AssignmentStatus,
+  limit: number = 100
+): Email[] {
+  const db = getDb();
+  const stmt = db.prepare(`
+    SELECT * FROM emails 
+    WHERE account = @account AND assignment_status = @status
+    ORDER BY date ASC
+    LIMIT @limit
+  `);
+  return stmt.all({ account, status, limit }) as Email[];
+}
+
+// ============================================================================
+// Duplicate Detection
+// ============================================================================
+
 export interface DuplicateMatch {
   id: string;
 }
@@ -209,6 +387,10 @@ export function findDuplicateByFuzzyMatch(senderDomain: string, amount: string, 
   return stmt.get({ senderDomain, amount, invoiceDate, excludeId, account }) as DuplicateMatch | undefined;
 }
 
+// ============================================================================
+// Summaries & Reports
+// ============================================================================
+
 export interface DeductibilitySummaryRow {
   deductible: DeductibleCategory | null;
   count: number;
@@ -238,6 +420,35 @@ export function getDeductibilitySummary(account: string, year: number | null = n
   return stmt.all(params) as DeductibilitySummaryRow[];
 }
 
+export interface SourceSummaryRow {
+  income_source_id: string | null;
+  count: number;
+  total_cents: number | null;
+}
+
+export function getIncomeSourceSummary(account: string, year: number | null = null): SourceSummaryRow[] {
+  const db = getDb();
+  let query = `
+    SELECT 
+      income_source_id,
+      COUNT(*) as count,
+      SUM(invoice_amount_cents) as total_cents
+    FROM emails 
+    WHERE account = @account AND status = 'downloaded'
+  `;
+  const params: Record<string, unknown> = { account };
+  
+  if (year) {
+    query += ' AND year = @year';
+    params.year = year;
+  }
+  
+  query += ' GROUP BY income_source_id';
+  
+  const stmt = db.prepare(query);
+  return stmt.all(params) as SourceSummaryRow[];
+}
+
 export function getManualItems(account: string, deductibleFilter: DeductibleCategory | null = null): Email[] {
   const db = getDb();
   let query = `
@@ -258,7 +469,7 @@ export function getManualItems(account: string, deductibleFilter: DeductibleCate
 }
 
 // ============================================================================
-// Manual Reviews Table & Functions
+// Manual Reviews Table
 // ============================================================================
 
 function initManualReviewsTable(): void {
@@ -292,14 +503,9 @@ export interface ManualReviewInput {
 export function saveManualReview(emailId: string, account: string, review: ManualReviewInput): void {
   const db = getDb();
   
-  // Ensure table exists
-  initManualReviewsTable();
-  
-  // Get original deductible from email
   const email = getEmailById(emailId, account);
   const originalDeductible = email?.deductible || null;
   
-  // Insert or replace manual review
   const stmt = db.prepare(`
     INSERT OR REPLACE INTO manual_reviews (
       email_id, account, original_deductible, reviewed_deductible,
@@ -320,7 +526,6 @@ export function saveManualReview(emailId: string, account: string, review: Manua
     reviewedVatRecoverable: review.vatRecoverable ? 1 : 0,
   });
   
-  // Update the emails table with the reviewed classification
   updateEmailDeductibility(emailId, account, review);
 }
 
@@ -348,7 +553,6 @@ export function updateEmailDeductibility(emailId: string, account: string, revie
 
 export function getManualReview(emailId: string, account: string): ManualReview | undefined {
   const db = getDb();
-  initManualReviewsTable();
   
   const stmt = db.prepare(`
     SELECT * FROM manual_reviews 
@@ -359,7 +563,6 @@ export function getManualReview(emailId: string, account: string): ManualReview 
 
 export function getEmailsNeedingReview(account: string, year?: number): Email[] {
   const db = getDb();
-  initManualReviewsTable();
   
   let query = `
     SELECT e.* FROM emails e
@@ -384,7 +587,6 @@ export function getEmailsNeedingReview(account: string, year?: number): Email[] 
 
 export function getReviewedCount(account: string, year?: number): number {
   const db = getDb();
-  initManualReviewsTable();
   
   let query = `
     SELECT COUNT(*) as count FROM manual_reviews mr
@@ -403,9 +605,170 @@ export function getReviewedCount(account: string, year?: number): number {
   return result.count;
 }
 
-export function closeDb(): void {
-  if (db) {
-    db.close();
-    db = null;
+// ============================================================================
+// Migration Support
+// ============================================================================
+
+/**
+ * Mark all existing emails as migrated from v1.
+ */
+export function markEmailsAsMigrated(account: string): number {
+  const db = getDb();
+  const stmt = db.prepare(`
+    UPDATE emails 
+    SET migration_source = 'v1'
+    WHERE account = @account AND migration_source IS NULL
+  `);
+  const result = stmt.run({ account });
+  return result.changes;
+}
+
+/**
+ * Set default situation and source for migrated emails.
+ */
+export function setDefaultAllocationForMigratedEmails(
+  account: string,
+  situationId: number,
+  sourceId: string
+): number {
+  const db = getDb();
+  const stmt = db.prepare(`
+    UPDATE emails 
+    SET 
+      situation_id = @situationId,
+      income_source_id = @sourceId,
+      assignment_status = 'heuristic',
+      assignment_metadata = '{"source":"migration","logicVersion":"2.0.0"}'
+    WHERE account = @account 
+      AND migration_source = 'v1'
+      AND situation_id IS NULL
+      AND status = 'downloaded'
+  `);
+  const result = stmt.run({ account, situationId, sourceId });
+  return result.changes;
+}
+
+// ============================================================================
+// Sync from Config
+// ============================================================================
+
+import type { KraxlerConfig } from '../types.js';
+// These types are used for sync functions
+import type { Situation as _Situation, IncomeSource as _IncomeSource, AllocationRule as _AllocationRule } from './jurisdictions/interface.js';
+
+/**
+ * Sync situations from config to database.
+ */
+export function syncSituationsToDb(config: KraxlerConfig): void {
+  const db = getDb();
+  
+  // Clear existing
+  db.exec('DELETE FROM situations');
+  
+  // Insert from config
+  const stmt = db.prepare(`
+    INSERT INTO situations (
+      id, from_date, to_date, jurisdiction, vat_status,
+      has_company_car, company_car_type, company_car_name, car_business_percent,
+      telecom_business_percent, internet_business_percent, home_office_type
+    ) VALUES (
+      @id, @from, @to, @jurisdiction, @vatStatus,
+      @hasCompanyCar, @companyCarType, @companyCarName, @carBusinessPercent,
+      @telecomBusinessPercent, @internetBusinessPercent, @homeOffice
+    )
+  `);
+  
+  for (const sit of config.situations) {
+    stmt.run({
+      id: sit.id,
+      from: sit.from,
+      to: sit.to,
+      jurisdiction: sit.jurisdiction,
+      vatStatus: sit.vatStatus,
+      hasCompanyCar: sit.hasCompanyCar ? 1 : 0,
+      companyCarType: sit.companyCarType,
+      companyCarName: sit.companyCarName,
+      carBusinessPercent: sit.carBusinessPercent,
+      telecomBusinessPercent: sit.telecomBusinessPercent,
+      internetBusinessPercent: sit.internetBusinessPercent,
+      homeOffice: sit.homeOffice,
+    });
   }
+}
+
+/**
+ * Sync income sources from config to database.
+ */
+export function syncIncomeSourcesToDb(config: KraxlerConfig): void {
+  const db = getDb();
+  
+  // Clear existing
+  db.exec('DELETE FROM income_sources');
+  
+  // Insert from config
+  const stmt = db.prepare(`
+    INSERT INTO income_sources (
+      id, name, category, valid_from, valid_to,
+      telecom_percent_override, internet_percent_override, vehicle_percent_override, notes
+    ) VALUES (
+      @id, @name, @category, @validFrom, @validTo,
+      @telecomPercentOverride, @internetPercentOverride, @vehiclePercentOverride, @notes
+    )
+  `);
+  
+  for (const src of config.incomeSources) {
+    stmt.run({
+      id: src.id,
+      name: src.name,
+      category: src.category,
+      validFrom: src.validFrom,
+      validTo: src.validTo,
+      telecomPercentOverride: src.telecomPercentOverride ?? null,
+      internetPercentOverride: src.internetPercentOverride ?? null,
+      vehiclePercentOverride: src.vehiclePercentOverride ?? null,
+      notes: src.notes ?? null,
+    });
+  }
+}
+
+/**
+ * Sync allocation rules from config to database.
+ */
+export function syncAllocationRulesToDb(config: KraxlerConfig): void {
+  const db = getDb();
+  
+  // Clear existing
+  db.exec('DELETE FROM allocation_rules');
+  
+  // Insert from config
+  const stmt = db.prepare(`
+    INSERT INTO allocation_rules (
+      id, vendor_domain, vendor_pattern, deductible_category,
+      min_amount_cents, strategy, allocations_json
+    ) VALUES (
+      @id, @vendorDomain, @vendorPattern, @deductibleCategory,
+      @minAmountCents, @strategy, @allocationsJson
+    )
+  `);
+  
+  for (const rule of config.allocationRules) {
+    stmt.run({
+      id: rule.id,
+      vendorDomain: rule.vendorDomain ?? null,
+      vendorPattern: rule.vendorPattern ?? null,
+      deductibleCategory: rule.deductibleCategory ?? null,
+      minAmountCents: rule.minAmountCents ?? null,
+      strategy: rule.strategy,
+      allocationsJson: JSON.stringify(rule.allocations),
+    });
+  }
+}
+
+/**
+ * Sync all config tables to database.
+ */
+export function syncConfigToDb(config: KraxlerConfig): void {
+  syncSituationsToDb(config);
+  syncIncomeSourcesToDb(config);
+  syncAllocationRulesToDb(config);
 }

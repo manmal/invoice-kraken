@@ -10,10 +10,12 @@ import {
   findDuplicateByFuzzyMatch,
 } from '../lib/db.js';
 import { prefilterEmails } from '../lib/prefilter.js';
-import { getMessage, downloadAttachment } from '../lib/gog.js';
+import { getMessage, downloadAttachment } from '../lib/gmail.js';
 import { analyzeEmailsForInvoices, checkAuth } from '../lib/ai.js';
 import { parseAmountToCents } from '../lib/extract.js';
-import { classifyDeductibility } from '../lib/vendors.js';
+import { classifyExpense } from '../lib/vendors.js';
+import { getSituationForDate } from '../lib/situations.js';
+import { loadConfig } from '../lib/config.js';
 import { generatePdfFromText, generatePdfFromEmailHtml } from '../lib/pdf.js';
 import { hashFile } from '../utils/hash.js';
 import { getInvoiceOutputPath } from '../utils/paths.js';
@@ -234,15 +236,24 @@ async function processEmail(
     
     // Fallback to vendor DB if AI didn't provide clear classification
     if (!deductible || deductible === 'unclear') {
-      const vendorClassification = classifyDeductibility(
-        email.sender_domain,
-        email.subject ?? '',
-        email.snippet ?? ''
-      );
-      deductible = vendorClassification.deductible;
-      deductibleReason = vendorClassification.reason;
-      incomeTaxPercent = vendorClassification.income_tax_percent;
-      vatRecoverable = vendorClassification.vat_recoverable;
+      // Get config and situation for the invoice date
+      const config = loadConfig();
+      const invoiceDateStr = analysis.invoice_date || email.date?.split('T')[0] || new Date().toISOString().split('T')[0];
+      const invoiceDate = new Date(invoiceDateStr);
+      const situation = getSituationForDate(config, invoiceDate);
+      
+      if (situation) {
+        const vendorClassification = classifyExpense(
+          email.sender_domain,
+          email.subject ?? '',
+          email.snippet ?? '',
+          situation
+        );
+        deductible = vendorClassification.deductibleCategory;
+        deductibleReason = vendorClassification.reason;
+        incomeTaxPercent = vendorClassification.incomeTaxPercent;
+        vatRecoverable = vendorClassification.vatRecoverable;
+      }
     }
     
     // Legacy support: convert deductible_percent to new fields if needed

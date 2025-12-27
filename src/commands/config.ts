@@ -4,10 +4,10 @@
 
 import { 
   updateConfig, 
-  runSetupWizard, 
   printConfig,
-  needsSetup 
+  needsSetup,
 } from '../lib/config.js';
+import { setupCommand } from './setup.js';
 import { 
   MODEL_PRESETS, 
   getTaskNames, 
@@ -66,22 +66,9 @@ async function askChoice<T>(rl: readline.Interface, question: string, options: C
 async function configureModels(): Promise<void> {
   const rl = createPrompt();
   
-  console.log(`
-╔════════════════════════════════════════════════════════════════════════════╗
-║  🤖 MODEL CONFIGURATION                                                    ║
-╠════════════════════════════════════════════════════════════════════════════╣
-║                                                                            ║
-║  Configure which AI models Kraxler uses for different tasks.               ║
-║                                                                            ║
-║  Options:                                                                  ║
-║  • Preset: Quick setup with predefined model combinations                  ║
-║  • Per-task: Fine-grained control over each task's model                   ║
-║                                                                            ║
-╚════════════════════════════════════════════════════════════════════════════╝
-`);
-
+  console.log('\n🤖 Model Configuration\n');
+  
   // Show available models
-  console.log('Checking available models...\n');
   const available = await getAvailableModels();
   
   if (available.length === 0) {
@@ -126,7 +113,7 @@ async function configureModels(): Promise<void> {
       { label: 'local - Local models via Ollama (requires Ollama setup)', value: 'local' },
     ]);
     
-    updateConfig({ model_preset: preset, models: undefined });
+    updateConfig({ modelPreset: preset, models: undefined });
     console.log(`\n✓ Model preset set to: ${preset}`);
   } else {
     // Per-task configuration
@@ -159,7 +146,7 @@ async function configureModels(): Promise<void> {
     }
     
     if (Object.keys(models).length > 0) {
-      updateConfig({ models, model_preset: undefined });
+      updateConfig({ models, modelPreset: undefined });
       console.log(`\n✓ Custom model configuration saved.`);
     } else {
       console.log(`\nNo changes made.`);
@@ -176,8 +163,8 @@ export async function configCommand(options: ConfigCommandOptions): Promise<void
   // Reset config and run setup again
   if (reset) {
     console.log('Resetting configuration...\n');
-    updateConfig({ setup_completed: false });
-    await runSetupWizard();
+    updateConfig({ setupCompleted: false, situations: [], incomeSources: [] });
+    await setupCommand();
     return;
   }
   
@@ -193,12 +180,7 @@ export async function configCommand(options: ConfigCommandOptions): Promise<void
     if (eqIndex === -1) {
       console.error('Usage: --set key=value');
       console.error('\nAvailable keys:');
-      console.error('  has_company_car=true|false');
-      console.error('  company_car_type=ice|electric|hybrid_plugin|hybrid');
-      console.error('  is_kleinunternehmer=true|false');
-      console.error('  telecom_business_percent=50|60|70|80|100');
-      console.error('  internet_business_percent=50|60|70|80|100');
-      console.error('  model_preset=cheap|balanced|quality|local');
+      console.error('  modelPreset=cheap|balanced|quality|local');
       process.exit(1);
     }
     
@@ -206,31 +188,27 @@ export async function configCommand(options: ConfigCommandOptions): Promise<void
     const value = set.substring(eqIndex + 1);
     
     // Validate model_preset
-    if (key === 'model_preset') {
+    if (key === 'modelPreset') {
       if (!MODEL_PRESETS[value]) {
         console.error(`Invalid preset: ${value}`);
         console.error('Valid presets: cheap, balanced, quality, local');
         process.exit(1);
       }
-      updateConfig({ model_preset: value, models: undefined }); // Clear per-task when setting preset
+      updateConfig({ modelPreset: value, models: undefined });
       console.log(`✓ Set ${key} = ${value}`);
       return;
     }
     
-    let parsedValue: string | boolean | number = value;
-    if (value === 'true') parsedValue = true;
-    else if (value === 'false') parsedValue = false;
-    else if (!isNaN(Number(value))) parsedValue = parseInt(value, 10);
-    
-    updateConfig({ [key]: parsedValue });
-    console.log(`✓ Set ${key} = ${parsedValue}`);
+    // For v2, most settings are in situations, not top-level
+    console.log(`Note: Use 'npx kraxler setup' to modify tax situations.`);
+    console.log(`Use 'npx kraxler config --set modelPreset=VALUE' to change model presets.`);
     return;
   }
   
   // Default: show current config
   if (needsSetup()) {
     console.log('No configuration found. Running setup...\n');
-    await runSetupWizard();
+    await setupCommand();
   } else {
     printConfig();
   }

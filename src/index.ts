@@ -21,7 +21,8 @@ import { configCommand } from './commands/config.js';
 import { modelsCommand } from './commands/models.js';
 import { closeDb } from './lib/db.js';
 import { closeBrowser } from './lib/browser.js';
-import { needsSetup, runSetupWizard } from './lib/config.js';
+import { needsSetup } from './lib/config.js';
+import { setupCommand } from './commands/setup.js';
 import { printPaths, getAllPaths } from './lib/paths.js';
 import { setModelOverrides } from './lib/models.js';
 
@@ -270,7 +271,7 @@ const originalParse = program.parse.bind(program);
   
   if (setupRequiredCommands.includes(commandArg) && needsSetup()) {
     console.log('First run detected. Running initial setup...\n');
-    await runSetupWizard();
+    await setupCommand();
   }
   
   return originalParse(args);

@@ -70,22 +70,26 @@ vi.mock('@mariozechner/pi-coding-agent', () => {
 // Mock config module
 vi.mock('./config.js', () => ({
   loadConfig: vi.fn(() => ({
-    tax_jurisdiction: 'AT',
-    has_company_car: false,
-    company_car_type: null,
-    is_kleinunternehmer: false,
-    telecom_business_percent: 50,
-    internet_business_percent: 50,
+    configVersion: 2,
+    jurisdiction: 'AT',
     accounts: ['test@example.com'],
-    setup_completed: true,
-    config_version: 1,
+    setupCompleted: true,
+    situations: [{
+      id: 'test-sit-1',
+      from: '2024-01-01',
+      to: null,
+      vatStatus: 'regelbesteuert',
+      hasCompanyCar: false,
+      companyCarType: null,
+      carBusinessPercent: 0,
+      telecomBusinessPercent: 50,
+      internetBusinessPercent: 50,
+      homeOffice: 'none',
+      jurisdiction: 'AT',
+    }],
+    incomeSources: [],
+    allocationRules: [],
   })),
-  getVehicleVatRecovery: vi.fn(() => ({
-    recoverable: false,
-    reason: 'No company car configured',
-  })),
-  getTelecomBusinessPercent: vi.fn(() => 50),
-  isKleinunternehmer: vi.fn(() => false),
 }));
 
 // Mock models module

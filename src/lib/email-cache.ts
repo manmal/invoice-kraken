@@ -6,7 +6,7 @@
 
 import Database from 'better-sqlite3';
 import type { Database as DatabaseType } from 'better-sqlite3';
-import * as child_process from 'child_process';
+import { getMessage } from './gmail.js';
 import { getDatabasePath } from './paths.js';
 import type { GmailPayload } from '../types.js';
 
@@ -106,25 +106,17 @@ function extractBodyFromPayload(payload: GmailPayload | undefined): EmailBody {
   return { textBody, htmlBody };
 }
 
-interface GmailGetResult {
-  message?: {
-    payload?: GmailPayload;
-  };
-  payload?: GmailPayload;
-}
-
 /**
- * Fetch email from gog and cache it
+ * Fetch email from Gmail API and cache it
  */
 async function fetchAndCache(account: string, messageId: string): Promise<EmailBody | null> {
   try {
-    const output = child_process.execSync(
-      `gog gmail get ${messageId} --account ${account} --output json`,
-      { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024, timeout: 30000 }
-    );
+    const message = await getMessage(account, messageId);
     
-    const result: GmailGetResult = JSON.parse(output);
-    const message = result.message || result;
+    if (!message) {
+      console.error(`Message ${messageId} not found`);
+      return null;
+    }
     
     // Extract body content
     const { textBody, htmlBody } = extractBodyFromPayload(message.payload);

@@ -3,7 +3,7 @@
  */
 
 import * as process from 'node:process';
-import { checkAccount, searchGmail, buildInvoiceQuery } from '../lib/gog.js';
+import { checkAccount, searchGmail, buildInvoiceQuery } from '../lib/gmail.js';
 import { getDb, insertEmail } from '../lib/db.js';
 import { extractSenderDomain } from '../lib/extract.js';
 import { parseDateRange, iterateMonths, getYearMonth } from '../lib/dates.js';
@@ -64,10 +64,8 @@ export async function scanCommand(options: ScanOptions): Promise<void> {
   const accountExists = await checkAccount(account);
   
   if (!accountExists) {
-    console.error(`Error: Account "${account}" is not configured in gog.`);
-    console.error('Run "gog auth list" to see configured accounts.');
-    console.error(`Run "gog auth add ${account}" to add this account.`);
-    process.exit(1);
+    console.error(`Error: Account "${account}" is not authenticated.`);
+    console.log(`The authentication flow will start now to link this account.`);
   }
   
   console.log(`✓ Account verified: ${account}`);

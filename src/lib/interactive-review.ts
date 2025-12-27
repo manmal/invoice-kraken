@@ -144,6 +144,7 @@ function getCategoryIcon(category: ReviewableCategory): string {
     vehicle: '🚗',
     meals: '🍽️',
     telecom: '📱',
+    gifts: '🎁',
     partial: '📊',
     none: '🚫',
   };
@@ -156,6 +157,7 @@ function formatCategory(category: ReviewableCategory): string {
     vehicle: 'Vehicle Expense',
     meals: 'Business Meals',
     telecom: 'Telecom',
+    gifts: 'Business Gifts',
     partial: 'Partial',
     none: 'Not Deductible',
   };

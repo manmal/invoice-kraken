@@ -73,15 +73,17 @@ npx kraxler scan -a your@gmail.com --from 2025-01-01 --to 2025-06-30
 ## Prerequisites
 
 1. **Node.js** >= 18
-2. **[gogcli](https://github.com/steipete/gogcli)** for Gmail access
+2. **Google Cloud Project** with Gmail API enabled (Client ID & Secret)
 3. **[pi](https://github.com/badlogic/pi-mono)** authentication (Claude, GPT, Gemini, etc.)
 
-### Setup gogcli
+### Google Authentication
 
-```bash
-brew install steipete/tap/gogcli
-gog auth add your@gmail.com
-```
+The first time you run a command requiring Gmail access (e.g., `scan`), Kraxler will prompt you for your **Google Cloud Client ID and Secret**.
+
+1. Create a project in [Google Cloud Console](https://console.cloud.google.com/).
+2. Enable the **Gmail API**.
+3. Create **OAuth 2.0 Client ID** credentials (Application type: **Desktop app**).
+4. Run `npx kraxler run -a your@gmail.com` and follow the prompts.
 
 ### Setup AI Authentication
 
