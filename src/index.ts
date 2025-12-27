@@ -106,6 +106,7 @@ program
   .option('--summary', 'Show tax deductibility summary')
   .option('--year <year>', 'Filter summary by year')
   .option('--include-duplicates', 'Include duplicates in the list')
+  .option('-i, --interactive', 'Interactively classify invoices needing review')
   .action(async (options: any): Promise<void> => {
     try {
       if (options.year) options.year = parseInt(options.year, 10);
@@ -155,12 +156,14 @@ program
   .option('--strict', 'Also auto-mark medium-confidence duplicates')
   .option('--model <id>', 'Override AI model (e.g., gemini-2.5-flash, gpt-4o)')
   .option('--provider <name>', 'Override AI provider (e.g., google, openai, anthropic)')
+  .option('--no-interactive', 'Skip interactive review at the end')
   .action(async (options: any): Promise<void> => {
     try {
       if (options.model || options.provider) {
         setModelOverrides({ model: options.model, provider: options.provider });
       }
       options.batchSize = parseInt(options.batchSize, 10);
+      options.noInteractive = !options.interactive;
       await runCommand(options);
     } catch (error: unknown) {
       console.error('Error:', (error as Error).message);

@@ -5,7 +5,7 @@
 import Database from 'better-sqlite3';
 import type { Database as DatabaseType, RunResult } from 'better-sqlite3';
 import { getDatabasePath } from './paths.js';
-import type { Email, EmailStatus, DeductibleCategory } from '../types.js';
+import type { Email, EmailStatus, DeductibleCategory, ReviewableCategory, ManualReview } from '../types.js';
 
 const DB_PATH: string = getDatabasePath();
 
@@ -255,6 +255,152 @@ export function getManualItems(account: string, deductibleFilter: DeductibleCate
   
   const stmt = db.prepare(query);
   return stmt.all(params) as Email[];
+}
+
+// ============================================================================
+// Manual Reviews Table & Functions
+// ============================================================================
+
+function initManualReviewsTable(): void {
+  if (!db) return;
+  
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS manual_reviews (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      email_id TEXT NOT NULL,
+      account TEXT NOT NULL,
+      original_deductible TEXT,
+      reviewed_deductible TEXT NOT NULL,
+      reviewed_reason TEXT,
+      reviewed_income_tax_percent INTEGER NOT NULL,
+      reviewed_vat_recoverable INTEGER NOT NULL,
+      reviewed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(email_id, account)
+    );
+    
+    CREATE INDEX IF NOT EXISTS idx_manual_reviews_account ON manual_reviews(account);
+  `);
+}
+
+export interface ManualReviewInput {
+  category: ReviewableCategory;
+  reason?: string;
+  incomeTaxPercent: number;
+  vatRecoverable: boolean;
+}
+
+export function saveManualReview(emailId: string, account: string, review: ManualReviewInput): void {
+  const db = getDb();
+  
+  // Ensure table exists
+  initManualReviewsTable();
+  
+  // Get original deductible from email
+  const email = getEmailById(emailId, account);
+  const originalDeductible = email?.deductible || null;
+  
+  // Insert or replace manual review
+  const stmt = db.prepare(`
+    INSERT OR REPLACE INTO manual_reviews (
+      email_id, account, original_deductible, reviewed_deductible,
+      reviewed_reason, reviewed_income_tax_percent, reviewed_vat_recoverable, reviewed_at
+    ) VALUES (
+      @emailId, @account, @originalDeductible, @reviewedDeductible,
+      @reviewedReason, @reviewedIncomeTaxPercent, @reviewedVatRecoverable, CURRENT_TIMESTAMP
+    )
+  `);
+  
+  stmt.run({
+    emailId,
+    account,
+    originalDeductible,
+    reviewedDeductible: review.category,
+    reviewedReason: review.reason || null,
+    reviewedIncomeTaxPercent: review.incomeTaxPercent,
+    reviewedVatRecoverable: review.vatRecoverable ? 1 : 0,
+  });
+  
+  // Update the emails table with the reviewed classification
+  updateEmailDeductibility(emailId, account, review);
+}
+
+export function updateEmailDeductibility(emailId: string, account: string, review: ManualReviewInput): void {
+  const db = getDb();
+  const stmt = db.prepare(`
+    UPDATE emails SET
+      deductible = @deductible,
+      deductible_reason = @reason,
+      income_tax_percent = @incomeTaxPercent,
+      vat_recoverable = @vatRecoverable,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = @emailId AND account = @account
+  `);
+  
+  stmt.run({
+    emailId,
+    account,
+    deductible: review.category,
+    reason: review.reason || null,
+    incomeTaxPercent: review.incomeTaxPercent,
+    vatRecoverable: review.vatRecoverable ? 1 : 0,
+  });
+}
+
+export function getManualReview(emailId: string, account: string): ManualReview | undefined {
+  const db = getDb();
+  initManualReviewsTable();
+  
+  const stmt = db.prepare(`
+    SELECT * FROM manual_reviews 
+    WHERE email_id = @emailId AND account = @account
+  `);
+  return stmt.get({ emailId, account }) as ManualReview | undefined;
+}
+
+export function getEmailsNeedingReview(account: string, year?: number): Email[] {
+  const db = getDb();
+  initManualReviewsTable();
+  
+  let query = `
+    SELECT e.* FROM emails e
+    LEFT JOIN manual_reviews mr ON e.id = mr.email_id AND e.account = mr.account
+    WHERE e.account = @account 
+      AND e.deductible = 'unclear'
+      AND e.status IN ('downloaded', 'manual')
+      AND mr.id IS NULL
+  `;
+  const params: Record<string, unknown> = { account };
+  
+  if (year) {
+    query += ' AND e.year = @year';
+    params.year = year;
+  }
+  
+  query += ' ORDER BY e.date ASC';
+  
+  const stmt = db.prepare(query);
+  return stmt.all(params) as Email[];
+}
+
+export function getReviewedCount(account: string, year?: number): number {
+  const db = getDb();
+  initManualReviewsTable();
+  
+  let query = `
+    SELECT COUNT(*) as count FROM manual_reviews mr
+    JOIN emails e ON mr.email_id = e.id AND mr.account = e.account
+    WHERE mr.account = @account
+  `;
+  const params: Record<string, unknown> = { account };
+  
+  if (year) {
+    query += ' AND e.year = @year';
+    params.year = year;
+  }
+  
+  const stmt = db.prepare(query);
+  const result = stmt.get(params) as { count: number };
+  return result.count;
 }
 
 export function closeDb(): void {

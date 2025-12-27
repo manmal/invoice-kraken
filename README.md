@@ -6,6 +6,8 @@
 
 Extract invoices from Gmail with AI-powered classification for 🇦🇹 Austrian tax deductions.
 
+> 🌍 **Contributions welcome!** PRs for other countries or alternative invoice classification schemes are very welcome!
+
 > ⚠️ **DISCLAIMER**: Tax suggestions are for informational purposes only. Always consult a qualified Steuerberater.
 
 ## Quick Start

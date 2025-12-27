@@ -1,8 +1,10 @@
 /**
- * List command - Display remaining invoices that need manual handling
+ * Review command - Display remaining invoices that need manual handling
+ * Optionally run interactive classification
  */
 
-import { getManualItems, getDeductibilitySummary, getEmailsByStatus } from '../lib/db.js';
+import { getManualItems, getDeductibilitySummary, getEmailsByStatus, getEmailsNeedingReview } from '../lib/db.js';
+import { runInteractiveReview } from '../lib/interactive-review.js';
 import type { Email, ReviewOptions, DeductibleCategory } from '../types.js';
 
 interface DeductibilitySummaryRow {
@@ -11,13 +13,20 @@ interface DeductibilitySummaryRow {
   total_cents: number | null;
 }
 
-export async function reviewCommand(options: ReviewOptions): Promise<void> {
-  const { account, format = 'table', deductible: deductibleFilter, summary, includeDuplicates } = options;
+export async function reviewCommand(options: ReviewOptions): Promise<{ needsReview: number }> {
+  const { account, format = 'table', deductible: deductibleFilter, summary, includeDuplicates, interactive } = options;
+  
+  // Interactive mode
+  if (interactive) {
+    await runInteractiveReview(account, options.year);
+    return { needsReview: 0 };
+  }
   
   // Summary mode
   if (summary) {
     printDeductibilitySummary(account, options.year);
-    return;
+    const needsReview = getEmailsNeedingReview(account, options.year).length;
+    return { needsReview };
   }
   
   // Get items based on filter
@@ -37,18 +46,18 @@ export async function reviewCommand(options: ReviewOptions): Promise<void> {
       console.log(`\n✓ ${downloaded.length} invoices have been downloaded.`);
       console.log(`Run "kraxler review --account ${account} --summary" for deductibility summary.`);
     }
-    return;
+    return { needsReview: 0 };
   }
   
   // Format output
   if (format === 'json') {
     console.log(JSON.stringify(items, null, 2));
-    return;
+    return { needsReview: 0 };
   }
   
   if (format === 'markdown') {
     printMarkdown(items);
-    return;
+    return { needsReview: 0 };
   }
   
   // Default: table format
@@ -88,6 +97,8 @@ export async function reviewCommand(options: ReviewOptions): Promise<void> {
   if (parts.length > 0) {
     console.log(`\nDeductibility: ${parts.join(', ')}`);
   }
+  
+  return { needsReview: deductCounts.unclear };
 }
 
 function printTable(items: Email[], _includeDuplicates: boolean): void {
@@ -150,12 +161,12 @@ function printMarkdown(items: Email[]): void {
   }
 }
 
-function printDeductibilitySummary(account: string, year: number | undefined): void {
+function printDeductibilitySummary(account: string, year: number | undefined): { needsReview: number } {
   const summary = getDeductibilitySummary(account, year) as DeductibilitySummaryRow[];
   
   if (summary.length === 0) {
     console.log('No downloaded invoices found.');
-    return;
+    return { needsReview: 0 };
   }
   
   console.log(`\n${'═'.repeat(50)}`);
@@ -195,6 +206,10 @@ function printDeductibilitySummary(account: string, year: number | undefined): v
   console.log(`   ✓ Downloaded: ${downloaded.length}`);
   console.log(`   ⊘ Duplicates: ${duplicates.length}`);
   console.log(`   ⚠ Manual: ${manual.length}`);
+  
+  // Count unclear items
+  const needsReview = getEmailsNeedingReview(account, year).length;
+  return { needsReview };
 }
 
 function getDeductIcon(deductible: DeductibleCategory | null): string {

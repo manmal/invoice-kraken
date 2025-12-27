@@ -9,10 +9,11 @@ import { reviewCommand } from './review.js';
 import { reportCommand } from './report.js';
 import { closeBrowser } from '../lib/browser.js';
 import { parseDateRange, getYearMonth } from '../lib/dates.js';
+import { runInteractiveReview } from '../lib/interactive-review.js';
 import type { RunOptions } from '../types.js';
 
 export async function runCommand(options: RunOptions): Promise<void> {
-  const { account, batchSize = 10, autoDedup = false, strict = false } = options;
+  const { account, batchSize = 10, autoDedup = false, strict = false, noInteractive = false } = options;
   
   // Parse date range
   let dateRange;
@@ -72,12 +73,12 @@ export async function runCommand(options: RunOptions): Promise<void> {
     
     console.log('\n');
     
-    // Stage 4: Review
+    // Stage 4: Review (summary)
     console.log('┌────────────────────────────────────────────────────────────────────────────┐');
     console.log('│  STAGE 4: REVIEW                                                           │');
     console.log('└────────────────────────────────────────────────────────────────────────────┘\n');
     
-    await reviewCommand({
+    const reviewResult = await reviewCommand({
       account,
       format: 'table',
       summary: true,
@@ -86,6 +87,17 @@ export async function runCommand(options: RunOptions): Promise<void> {
     });
     
     console.log('\n');
+    
+    // Stage 4b: Interactive review (if items need review and not disabled)
+    if (reviewResult.needsReview > 0 && !noInteractive) {
+      console.log('┌────────────────────────────────────────────────────────────────────────────┐');
+      console.log('│  STAGE 4b: INTERACTIVE REVIEW                                              │');
+      console.log('└────────────────────────────────────────────────────────────────────────────┘\n');
+      
+      await runInteractiveReview(account, fromYM.year);
+      
+      console.log('\n');
+    }
     
     // Stage 5: Report
     console.log('┌────────────────────────────────────────────────────────────────────────────┐');

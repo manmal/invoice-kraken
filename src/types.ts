@@ -69,6 +69,25 @@ export type DeductibleCategory =
   | 'none'
   | 'unclear';
 
+// Reviewable categories exclude 'unclear' - these are what users can select
+export type ReviewableCategory = Exclude<DeductibleCategory, 'unclear'>;
+
+// ============================================================================
+// Manual Review Types
+// ============================================================================
+
+export interface ManualReview {
+  id: number;
+  email_id: string;
+  account: string;
+  original_deductible: DeductibleCategory | null;
+  reviewed_deductible: ReviewableCategory;
+  reviewed_reason: string | null;
+  reviewed_income_tax_percent: number;
+  reviewed_vat_recoverable: number; // 0 = false, 1 = true
+  reviewed_at: string;
+}
+
 // ============================================================================
 // AI Classification Types
 // ============================================================================
@@ -264,6 +283,7 @@ export interface ReviewOptions {
   summary: boolean;
   year?: number;
   includeDuplicates: boolean;
+  interactive?: boolean;
 }
 
 export interface RunOptions extends ScanOptions {
@@ -272,4 +292,5 @@ export interface RunOptions extends ScanOptions {
   strict: boolean;
   model?: string;
   provider?: string;
+  noInteractive?: boolean;
 }
